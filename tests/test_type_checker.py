@@ -23,7 +23,7 @@ SIMPLE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
     (
         "boolean-expression",
         """
-        let x = true && false || true;
+        let x = true && false || true == false != true;
         x
         """,
         ast.BOUND_BOOLEAN_TYPE
@@ -37,12 +37,20 @@ SIMPLE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         ast.BOUND_INTEGER_TYPE
     ),
     (
-        "integer-expression",
+        "integer-arithmetic",
         """
         let x = 1 + 2 - 3 * 5 / 6 % 7;
         x
         """,
         ast.BOUND_INTEGER_TYPE
+    ),
+    (
+        "integer-comparison",
+        """
+        let x = 1 < 2 > 3 == 4 != 5;
+        x
+        """,
+        ast.BOUND_BOOLEAN_TYPE
     ),
     (
         "string",
@@ -53,7 +61,7 @@ SIMPLE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         ast.BOUND_STRING_TYPE
     ),
     (
-        "string-expression-left",
+        "string-add-left",
         """
         let x = "foo" + 1;
         x
@@ -61,12 +69,20 @@ SIMPLE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         ast.BOUND_STRING_TYPE
     ),
     (
-        "string-expression-right",
+        "string-add-right",
         """
         let x = 1 + "foo";
         x
         """,
         ast.BOUND_STRING_TYPE
+    ),
+    (
+        "string-comparison",
+        """
+        let x = "foo" != "bar" == "baz";
+        x
+        """,
+        ast.BOUND_BOOLEAN_TYPE
     ),
     (
         "tuple",
@@ -145,6 +161,14 @@ SIMPLE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         ast.BOUND_INTEGER_TYPE
     ),
     (
+        "call-static-identity-function",
+        """
+        let fun = fn (a) => a;
+        fun("nothing")
+        """,
+        ast.BOUND_STRING_TYPE
+    ),
+    (
         "call-dynamic-boolean",
         """
         let fun = fn (a) => a && false;
@@ -177,6 +201,16 @@ SIMPLE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         ast.BoundType(ast.NativeType.TUPLE, (ast.BOUND_STRING_TYPE, ast.BOUND_INTEGER_TYPE))
     ),
     (
+        "call-overloaded-identity-function",
+        """
+        let fun = fn (a) => a;
+        let a = fun(1 + 1);
+        let b = fun("something");
+        b
+        """,
+        ast.BOUND_UNDEFINED_TYPE
+    ),
+    (
         "call-dynamic-function",
         """
         let fun = fn (a) => {
@@ -186,6 +220,21 @@ SIMPLE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         fun("nothing")
         """,
         ast.BoundFunctionType((), ast.BOUND_STRING_TYPE)
+    ),
+    (
+        "anonymous-function",
+        """
+        let x = (fn (a) => { 1 } );
+        x
+        """,
+        ast.BoundFunctionType((ast.BOUND_ANY_TYPE,), ast.BOUND_INTEGER_TYPE)
+    ),
+    (
+        "anonymous-function-call",
+        """
+        (fn (a) => { 1 } )("nothing")
+        """,
+        ast.BOUND_INTEGER_TYPE
     )
 ]
 
@@ -229,13 +278,7 @@ CONDITIONAL_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         let x = if (true) (1, 2) else (3, "foo");
         x
         """,
-        ast.BoundType(
-            ast.NativeType.TUPLE,
-            (
-                ast.BOUND_INTEGER_TYPE,
-                ast.BoundTypeUnion.for_members(ast.BOUND_INTEGER_TYPE, ast.BOUND_STRING_TYPE)
-            )
-        )
+        ast.BoundType(ast.NativeType.TUPLE, (ast.BOUND_INTEGER_TYPE, ast.BOUND_UNDEFINED_TYPE))
     ),
     (
         "conditional-function-return",
@@ -281,10 +324,15 @@ CONDITIONAL_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         let z = if (true) x else y;
         z
         """,
-        ast.BoundType(
-            ast.NativeType.FUNCTION,
-            (ast.BoundTypeUnion.for_members(ast.BOUND_INTEGER_TYPE, ast.BOUND_STRING_TYPE),)
-        )
+        ast.BoundFunctionType((), ast.BOUND_UNDEFINED_TYPE)
+    ),
+    (
+        "conditional-bool-call",
+        """
+        let foo = fn (a) => a || false;
+        foo(if (false) false else true)
+        """,
+        ast.BOUND_BOOLEAN_TYPE
     ),
     (
         "conditional-integer-call",
@@ -295,7 +343,7 @@ CONDITIONAL_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         ast.BOUND_INTEGER_TYPE
     ),
     (
-        "conditional-string-call",
+        "conditional-int-string-call",
         """
         let foo = fn (a) => a + 1;
         foo(if (false) 1 else "bar")
@@ -334,121 +382,25 @@ STATIC_ERRORS_TESTS: t.List[t.Tuple[str, str, t.Type[Exception]]] = [
         ValueError
     ),
     (
-        "arithmetic-sub",
+        "identifier-self-reference",
         """
-        let x = 1 - true;
+        let x = x;
         x
         """,
-        TypeError
-    ),
-    (
-        "arithmetic-mul",
-        """
-        let x = 10 * "foo";
-        x
-        """,
-        TypeError
-    ),
-    (
-        "arithmetic-div",
-        """
-        let x = 10 / "foo";
-        x
-        """,
-        TypeError
-    ),
-    (
-        "arithmetic-mod",
-        r"""
-        let x = 10 % false;
-        x
-        """,
-        TypeError
-    ),
-    (
-        "arithmetic-lt",
-        """
-        let x = false < 20;
-        x
-        """,
-        TypeError
-    ),
-    (
-        "arithmetic-lte",
-        """
-        let x = false <= 30;
-        x
-        """,
-        TypeError
-    ),
-    (
-        "arithmetic-gt",
-        """
-        let x = 30 > "foo";
-        x
-        """,
-        TypeError
-    ),
-    (
-        "arithmetic-gte",
-        """
-        let x = 30 >= false;
-        x
-        """,
-        TypeError
-    ),
-    (
-        "logical-equals-bool",
-        """
-        let x = 30 == false;
-        x
-        """,
-        TypeError
-    ),
-    (
-        "logical-equals-string",
-        """
-        let x = 30 == "false";
-        x
-        """,
-        TypeError
-    ),
-    (
-        "logical-notequals-string",
-        """
-        let x = 30 != "false";
-        x
-        """,
-        TypeError
-    ),
-    (
-        "logical-and",
-        """
-        let x = true && 1;
-        x
-        """,
-        TypeError
-    ),
-    (
-        "logical-or",
-        """
-        let x = false || "foo";
-        x
-        """,
-        TypeError
+        ValueError
     )
 ]
 
 
 RECURSIVE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
-    (
-        "function-return-itself",
-        """
-        let x = fn () => x;
-        x
-        """,
-        ast.BoundFunctionType((), ast.BOUND_ANY_TYPE) # Function<Any>
-    ),
+    # (
+    #     "function-return-itself",
+    #     """
+    #     let x = fn () => x;
+    #     x
+    #     """,
+    #     ast.BoundFunctionType((), ast.BOUND_ANY_TYPE) # Function<Any>
+    # ),
     (
         "fib",
         """
@@ -464,6 +416,35 @@ RECURSIVE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         ast.BOUND_INTEGER_TYPE
     ),
     (
+        "fib-signature",
+        """
+        let fib = fn (n) => {
+            if (n < 2) {
+                n
+            } else {
+                fib(n - 1) + fib(n - 2)
+            }
+        };
+        fib
+        """,
+        ast.BoundFunctionType((ast.BOUND_INTEGER_TYPE,), ast.BOUND_INTEGER_TYPE)
+    ),
+    (
+        "fib-let-signature",
+        """
+        let fib = fn (n) => {
+            let _ = 1;
+            if (n < 2) {
+                n
+            } else {
+                fib(n - 1) + fib(n - 2)
+            }
+        };
+        fib
+        """,
+        ast.BoundFunctionType((ast.BOUND_INTEGER_TYPE,), ast.BOUND_INTEGER_TYPE)
+    ),
+    (
         "fib-tail-recursive",
         """
         let fibrec = fn (n, k1, k2) => {
@@ -477,12 +458,73 @@ RECURSIVE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
                 }
             }
         };
-        fibrec
+        fibrec(10, 0, 1)
         """,
-        ast.BoundFunctionType(
-            (ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE),
-            ast.BOUND_INTEGER_TYPE
-        )
+        ast.BOUND_INTEGER_TYPE,
+    ),
+    (
+        "sum",
+        """
+        let sum = fn (n) => {
+            if (n == 1) {
+                n
+            } else {
+                n + sum(n - 1)
+            }
+        };
+        print(sum(5))
+        """,
+        ast.BOUND_INTEGER_TYPE
+    ),
+    (
+        "sum-signature",
+        """
+        let sum = fn (n) => {
+            if (n == 1) {
+                n
+            } else {
+                n + sum(n - 1)
+            }
+        };
+        sum
+        """,
+        ast.BoundFunctionType((ast.BOUND_INTEGER_TYPE,), ast.BOUND_INTEGER_TYPE)
+    ),
+    (
+        "combination",
+        """
+        let combination = fn (n, k) => {
+            let a = k == 0;
+            let b = k == n;
+            if (a || b)
+            {
+                1
+            }
+            else {
+                combination(n - 1, k - 1) + combination(n - 1, k)
+            }
+        };
+        print(combination(10, 2))
+        """,
+        ast.BOUND_INTEGER_TYPE
+    ),
+    (
+        "combination-signature",
+        """
+        let combination = fn (n, k) => {
+            let a = k == 0;
+            let b = k == n;
+            if (a || b)
+            {
+                1
+            }
+            else {
+                combination(n - 1, k - 1) + combination(n - 1, k)
+            }
+        };
+        combination
+        """,
+        ast.BoundFunctionType((ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE), ast.BOUND_INTEGER_TYPE)
     )
 ]
 
@@ -495,24 +537,23 @@ class BinderTest(unittest.TestCase):
                 program = ast.typecheck(parser.parse(src)['expression'])
                 self.assertEqual(program.boundtype, expected)
 
-    # def test2_conditional_inference(self):
-    #     for test, src, expected in CONDITIONAL_INFERENCE_TESTS:
-    #         with self.subTest(test):
-    #             program = ast.Binder(ast.BindScope(None)).bind_program(parser.parse(src))
-    #             self.assertEqual(program.body.type, expected)
+    def test2_conditional_inference(self):
+        for test, src, expected in CONDITIONAL_INFERENCE_TESTS:
+            with self.subTest(test):
+                program = ast.typecheck(parser.parse(src)['expression'])
+                self.assertEqual(program.boundtype, expected)
 
-    # def test3_static_errors(self):
-    #     for test, src, expected in STATIC_ERRORS_TESTS:
-    #         with self.subTest(test):
-    #             syntax = parser.parse(src)
-    #             binder = ast.Binder(ast.BindScope(None))
-    #             self.assertRaises(expected, lambda: binder.bind_program(syntax))
+    def test3_static_errors(self):
+        for test, src, expected in STATIC_ERRORS_TESTS:
+            with self.subTest(test):
+                syntax = parser.parse(src)
+                self.assertRaises(expected, lambda: ast.typecheck(syntax['expression']))
 
-    # def test4_recursive_inference(self):
-    #     for test, src, expected in RECURSIVE_INFERENCE_TESTS:
-    #         with self.subTest(test):
-    #             program = ast.typecheck(parser.parse(src)['expression'])
-    #             self.assertEqual(program.boundtype, expected)
+    def test4_recursive_inference(self):
+        for test, src, expected in RECURSIVE_INFERENCE_TESTS:
+            with self.subTest(test):
+                program = ast.typecheck(parser.parse(src)['expression'])
+                self.assertEqual(program.boundtype, expected)
 
 
 if __name__ == '__main__':

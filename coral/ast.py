@@ -457,8 +457,12 @@ class Expression:
     def typecheck(self, supertype: IBoundType) -> IBoundType:
         """Performs a type checking round.
         
-        The "supertype" is a constraint over the type checking result. Either it is a sub type
-        of the given type or UNDEFINED. The result is returned.
+        The "supertype" is a constraint over the type of the expression evaluation result from this node.
+        Either it is a sub type of the given type or UNDEFINED. The result is returned.
+
+        Despite being called "typecheck", we want to perform only type inference. Static type validation
+        is possible for a few cases, but I think it would make the entire process slower. We defer
+        type validation (the real check) to runtime when the inferred type is UNDEFINED.
         """
         raise NotImplementedError
 
@@ -513,6 +517,7 @@ class LiteralStringValue(Expression):
 
 
 class ReferenceExpression(Expression):
+    """References have the type of referenced variables."""
 
     def __init__(
         self,
@@ -579,6 +584,7 @@ _RINHAOP_PARSE_DICT: t.Final['t.Dict[parser.BinaryOperator, BinaryOperator]'] = 
 }
 
 class BinaryExpression(Expression):
+    """Binary operators have well known type. They will be never UNDEFINED."""
 
     def __init__(
         self,
@@ -613,75 +619,198 @@ class BinaryExpression(Expression):
     def _typecheck_add(self, supertype: IBoundType) -> IBoundType:
         left = self._left.typecheck(BINOP_ADD_TYPES)
         right = self._right.typecheck(BINOP_ADD_TYPES)
-        addop = BINOP_ADD_TYPES.lower(supertype)
-        if (
-            addop == NativeType.UNDEFINED or
-            left.type == NativeType.UNDEFINED or
-            left.type == NativeType.UNION or
-            right.type == NativeType.UNDEFINED or
-            right.type == NativeType.UNION
-        ):
-            self.boundtype = BINOP_ADD_TYPES
-            return addop
         if left.type == NativeType.INTEGER and right.type == NativeType.INTEGER:
             self.boundtype = BOUND_INTEGER_TYPE
-            return self.boundtype
-        if left.type == NativeType.STRING or right.type == NativeType.STRING:
+        elif (
+            (left.type == NativeType.STRING and right.type != NativeType.UNDEFINED) or
+            (right.type == NativeType.STRING and left.type != NativeType.UNDEFINED)
+        ):
             self.boundtype = BOUND_STRING_TYPE
-            return self.boundtype
-        raise RuntimeError('it should be int or string!')
+        else:
+            self.boundtype = BINOP_ADD_TYPES
+        return self.boundtype.lower(supertype)
 
     def _typecheck_arithmetic(self, supertype: IBoundType) -> IBoundType:
-        left = self._left.typecheck(BOUND_INTEGER_TYPE)
-        right = self._right.typecheck(BOUND_INTEGER_TYPE)
-        intop = BOUND_INTEGER_TYPE.lower(supertype)
-        if intop == NativeType.UNDEFINED or left.type == NativeType.UNDEFINED or right.type == NativeType.UNDEFINED:
-            self.boundtype = BOUND_INTEGER_TYPE
-            return intop
-        self.boundtype = intop
-        return intop
+        self._left.typecheck(BOUND_INTEGER_TYPE)
+        self._right.typecheck(BOUND_INTEGER_TYPE)
+        self.boundtype = BOUND_INTEGER_TYPE
+        return self.boundtype.lower(supertype)
     
     def _typecheck_comparison(self, supertype: IBoundType) -> IBoundType:
-        left = self._left.typecheck(BOUND_INTEGER_TYPE)
-        right = self._right.typecheck(BOUND_INTEGER_TYPE)
-        compop = BOUND_BOOLEAN_TYPE.lower(supertype)
-        if compop == NativeType.UNDEFINED or left.type == NativeType.UNDEFINED or right.type == NativeType.UNDEFINED:
-            self.boundtype = BOUND_BOOLEAN_TYPE
-            return compop
-        self.boundtype = compop
-        return compop
+        self._left.typecheck(BOUND_INTEGER_TYPE)
+        self._right.typecheck(BOUND_INTEGER_TYPE)
+        self.boundtype = BOUND_BOOLEAN_TYPE
+        return self.boundtype.lower(supertype)
 
     def _typecheck_logical(self, supertype: IBoundType) -> IBoundType:
-        left = self._left.typecheck(BOUND_BOOLEAN_TYPE)
-        right = self._right.typecheck(BOUND_BOOLEAN_TYPE)
-        boolop = BOUND_BOOLEAN_TYPE.lower(supertype)
-        if boolop == NativeType.UNDEFINED or left.type == NativeType.UNDEFINED or right.type == NativeType.UNDEFINED:
-            self.boundtype = BOUND_BOOLEAN_TYPE
-            return boolop
-        self.boundtype = boolop
-        return boolop
+        self._left.typecheck(BOUND_BOOLEAN_TYPE)
+        self._right.typecheck(BOUND_BOOLEAN_TYPE)
+        self.boundtype = BOUND_BOOLEAN_TYPE
+        return self.boundtype.lower(supertype)
 
     def _typecheck_equals(self, supertype: IBoundType) -> IBoundType:
         left = self._left.typecheck(BINOP_EQUAL_TYPES)
-        right = self._right.typecheck(BINOP_EQUAL_TYPES)
-        equalsop = BOUND_BOOLEAN_TYPE.lower(supertype)
-        if equalsop == NativeType.UNDEFINED or left.type == NativeType.UNDEFINED or right.type == NativeType.UNDEFINED:
-            self.boundtype = BOUND_BOOLEAN_TYPE
-            return equalsop
-        self.boundtype = equalsop
-        return equalsop
+        if left.type == NativeType.BOOLEAN:
+            self._right.typecheck(BOUND_BOOLEAN_TYPE)
+        elif left.type == NativeType.INTEGER:
+            self._right.typecheck(BOUND_INTEGER_TYPE)
+        elif left.type == NativeType.STRING:
+            self._right.typecheck(BOUND_STRING_TYPE)
+        else:
+            self._right.typecheck(BINOP_EQUAL_TYPES)
+        self.boundtype = BOUND_BOOLEAN_TYPE
+        return self.boundtype.lower(supertype)
     
     def _typecheck_not_equals(self, supertype: IBoundType) -> IBoundType:
         left = self._left.typecheck(BINOP_NOT_EQUAL_TYPES)
-        right = self._right.typecheck(BINOP_NOT_EQUAL_TYPES)
-        not_equalsop = BOUND_BOOLEAN_TYPE.lower(supertype)
-        if not_equalsop == NativeType.UNDEFINED or left.type == NativeType.UNDEFINED or right.type == NativeType.UNDEFINED:
-            self.boundtype = BOUND_BOOLEAN_TYPE
-            return not_equalsop
-        self.boundtype = not_equalsop
-        return not_equalsop
+        if left.type == NativeType.BOOLEAN:
+            self._right.typecheck(BOUND_BOOLEAN_TYPE)
+        elif left.type == NativeType.INTEGER:
+            self._right.typecheck(BOUND_INTEGER_TYPE)
+        elif left.type == NativeType.STRING:
+            self._right.typecheck(BOUND_STRING_TYPE)
+        else:
+            self._right.typecheck(BINOP_NOT_EQUAL_TYPES)
+        self.boundtype = BOUND_BOOLEAN_TYPE
+        return self.boundtype.lower(supertype)
+
+
+class PrintExpression(Expression):
+    """Print has the type of its argument"""
+
+    def __init__(
+        self,
+        *,
+        type_: IBoundType,
+        scope: TypeScope,
+        parent: t.Optional['Expression'],
+        value: Expression
+    ) -> None:
+        super().__init__(type_, scope, parent)
+        self._value = value
+
+    def typecheck(self, supertype: IBoundType) -> IBoundType:
+        # print returns the argument
+        return self._value.typecheck(supertype)
+
+
+class TupleExpression(Expression):
+    """Tuple expressions always have the tuple type."""
+
+    def __init__(
+        self,
+        type_: IBoundType,
+        scope: TypeScope,
+        parent: t.Optional['Expression'],
+        first: Expression,
+        second: Expression
+    ) -> None:
+        if type_.type != NativeType.TUPLE:
+            raise TypeError(f"expected NativeType.TUPLE type for tuple expression, but got {type_}")
+        super().__init__(type_, scope, parent)
+        self._first = first
+        self._second = second
+
+    def typecheck(self, supertype: IBoundType) -> IBoundType:
+        supertuple = BOUND_TUPLE_TYPE.lower(supertype)
+        if supertuple.type == NativeType.TUPLE:
+            self.boundtype = BoundType(
+                NativeType.TUPLE,
+                (
+                    self._first.typecheck(supertuple.generics[0]),
+                    self._second.typecheck(supertuple.generics[1])
+                )
+            )
+            return self.boundtype
+        else:
+            self.boundtype = BOUND_TUPLE_TYPE
+            return BOUND_UNDEFINED_TYPE
+
+class FirstExpression(Expression):
+    """First always takes tuples as argument and return their first member"""
+
+    def __init__(
+        self,
+        *,
+        type_: IBoundType,
+        scope: TypeScope,
+        parent: t.Optional['Expression'],
+        value: Expression
+    ) -> None:
+        super().__init__(type_, scope, parent)
+        self._value = value
+
+    def typecheck(self, supertype: IBoundType) -> IBoundType:
+        signature = self._value.typecheck(BoundType(NativeType.TUPLE, (supertype, BOUND_ANY_TYPE)))
+        if signature.type == NativeType.TUPLE:
+            self.boundtype = signature.generics[0]
+            return signature.generics[0]
+        self.boundtype = BOUND_UNDEFINED_TYPE
+        return BOUND_UNDEFINED_TYPE
+
+class SecondExpression(Expression):
+    """Second always takes tuples as argument and return their second member"""
+
+    def __init__(
+        self,
+        *,
+        type_: IBoundType,
+        scope: TypeScope,
+        parent: t.Optional['Expression'],
+        value: Expression
+    ) -> None:
+        super().__init__(type_, scope, parent)
+        self._value = value
+
+    def typecheck(self, supertype: IBoundType) -> IBoundType:
+        signature = self._value.typecheck(BoundType(NativeType.TUPLE, (BOUND_ANY_TYPE, supertype)))
+        if signature.type == NativeType.TUPLE:
+            self.boundtype = signature.generics[1]
+            return signature.generics[1]
+        self.boundtype = BOUND_UNDEFINED_TYPE
+        return BOUND_UNDEFINED_TYPE
+
+
+class ConditionalExpression(Expression):
+    """Conditional expressions have the intersection of both branches type as their type"""
+
+    def __init__(
+        self,
+        *,
+        type_: IBoundType,
+        scope: TypeScope,
+        parent: t.Optional['Expression'],
+        cond: Expression,
+        then: Expression,
+        alternate: Expression,
+    ) -> None:
+        super().__init__(type_, scope, parent)
+        self._cond = cond
+        self._then = then
+        self._alternate = alternate
+
+    def typecheck(self, supertype: IBoundType) -> IBoundType:
+        # condition must be boolean
+        cond = self._cond.typecheck(BOUND_BOOLEAN_TYPE)
+        if cond.type != NativeType.BOOLEAN:
+            raise TypeError("conditional expressions must have a boolean as test")
+        # here we try to infer the "return" statement of a function from each side of the IF
+        # branch. since rinha has no explicitly keyword for returns we must do this
+        # "lookbehind" workaround
+        if isinstance(self.parent, FunctionExpression):
+            then = self._then.typecheck(supertype)
+            self.parent.typecheck_return(then)
+            alternate = self._alternate.typecheck(supertype)
+            self.parent.typecheck_return(alternate)
+        else:
+            then = self._then.typecheck(supertype)
+            alternate = self._alternate.typecheck(supertype)
+        self.boundtype = then.lower(alternate)
+        return self.boundtype
+
 
 class CallExpression(Expression):
+    """Calls have the type of the called function's return"""
     
     def __init__(
         self,
@@ -709,133 +838,6 @@ class CallExpression(Expression):
             return signature.return_type
         return signature
 
-class PrintExpression(Expression):
-
-    def __init__(
-        self,
-        *,
-        type_: IBoundType,
-        scope: TypeScope,
-        parent: t.Optional['Expression'],
-        value: Expression
-    ) -> None:
-        super().__init__(type_, scope, parent)
-        self._value = value
-
-    def typecheck(self, supertype: IBoundType) -> IBoundType:
-        # print returns the argument
-        return self._value.typecheck(supertype)
-
-
-class TupleExpression(Expression):
-
-    def __init__(
-        self,
-        type_: IBoundType,
-        scope: TypeScope,
-        parent: t.Optional['Expression'],
-        first: Expression,
-        second: Expression
-    ) -> None:
-        if type_.type != NativeType.TUPLE:
-            raise TypeError(f"expected NativeType.TUPLE type for tuple expression, but got {type_}")
-        super().__init__(type_, scope, parent)
-        self._first = first
-        self._second = second
-
-    def typecheck(self, supertype: IBoundType) -> IBoundType:
-        supertuple = BOUND_TUPLE_TYPE.lower(supertype)
-        if supertuple.type == NativeType.TUPLE:
-            return BoundType(
-                NativeType.TUPLE,
-                (
-                    self._first.typecheck(supertuple.generics[0]),
-                    self._second.typecheck(supertuple.generics[1])
-                )
-            )
-        return supertuple
-
-class FirstExpression(Expression):
-
-    def __init__(
-        self,
-        *,
-        type_: IBoundType,
-        scope: TypeScope,
-        parent: t.Optional['Expression'],
-        value: Expression
-    ) -> None:
-        super().__init__(type_, scope, parent)
-        self._value = value
-
-    def typecheck(self, supertype: IBoundType) -> IBoundType:
-        # supertype is the expected type of the first member
-        signature = self._value.typecheck(BoundType(NativeType.TUPLE, (supertype, BOUND_ANY_TYPE)))
-        if signature.type == NativeType.TUPLE:
-            self.boundtype = signature.generics[0]
-            return signature.generics[0]
-        self.boundtype = BOUND_UNDEFINED_TYPE
-        return BOUND_UNDEFINED_TYPE
-
-class SecondExpression(Expression):
-
-    def __init__(
-        self,
-        *,
-        type_: IBoundType,
-        scope: TypeScope,
-        parent: t.Optional['Expression'],
-        value: Expression
-    ) -> None:
-        super().__init__(type_, scope, parent)
-        self._value = value
-
-    def typecheck(self, supertype: IBoundType) -> IBoundType:
-        # supertype is the expected type of the second member
-        signature = self._value.typecheck(BoundType(NativeType.TUPLE, (BOUND_ANY_TYPE, supertype)))
-        if signature.type == NativeType.TUPLE:
-            self.boundtype = signature.generics[1]
-            return signature.generics[1]
-        self.boundtype = BOUND_UNDEFINED_TYPE
-        return BOUND_UNDEFINED_TYPE
-
-
-class ConditionalExpression(Expression):
-
-    def __init__(
-        self,
-        *,
-        type_: IBoundType,
-        scope: TypeScope,
-        parent: t.Optional['Expression'],
-        cond: Expression,
-        then: Expression,
-        alternate: Expression,
-    ) -> None:
-        super().__init__(type_, scope, parent)
-        self._cond = cond
-        self._then = then
-        self._alternate = alternate
-
-    def typecheck(self, supertype: IBoundType) -> IBoundType:
-        # condition must be boolean
-        cond = self._cond.typecheck(BOUND_BOOLEAN_TYPE)
-        if cond.type != NativeType.BOOLEAN:
-            raise TypeError("conditional expressions must have a boolean as test")
-        # here we try to infer the "return" statement of a function from each side of the IF
-        # branch. since rinha has no explicitly keyword for returns we must do this
-        # "lookbehind" workaround
-        then = self._then.typecheck(supertype)
-        if self.parent is not None and self.parent.boundtype.type == NativeType.FUNCTION:
-            parent = t.cast(FunctionExpression, self.parent)
-            parent.typecheck_return(then)
-        alternate = self._alternate.typecheck(supertype)
-        if self.parent is not None and self.parent.boundtype.type == NativeType.FUNCTION:
-            parent = t.cast(FunctionExpression, self.parent)
-            parent.typecheck_return(alternate)
-        self.boundtype = then.union(alternate)
-        return self.boundtype
-
 
 class FunctionExpression(Expression):
 
@@ -853,7 +855,6 @@ class FunctionExpression(Expression):
         self._binding: t.Final = binding
         self._params: t.Final = params
         self._body: t.Final = body
-        self.boundtype: BoundFunctionType
 
     def typecheck(self, supertype: IBoundType) -> IBoundType:
         lowered_signature = self.boundtype.lower(supertype)
@@ -875,7 +876,8 @@ class FunctionExpression(Expression):
         return lowered_signature
 
     def typecheck_return(self, type_: IBoundType) -> IBoundType:
-        lowered_signature = self.boundtype.lower(BoundFunctionType(self.boundtype.params, type_))
+        boundtype = t.cast(BoundFunctionType, self.boundtype)
+        lowered_signature = self.boundtype.lower(BoundFunctionType(boundtype.params, type_))
         if lowered_signature.type == NativeType.FUNCTION:
             lowered_signature = t.cast(BoundFunctionType, lowered_signature)
             if self._binding is not None:
@@ -1096,15 +1098,24 @@ def build_typed_ast(
             return func
         case 'Let':
             term = t.cast(parser.LetExpressionSyntax, term)
-            var = scope.declare(term['name']['text'], BOUND_ANY_TYPE)
-            binding = ReferenceExpression(
-                type_=var.type,
-                scope=scope,
-                parent=None,
-                var=var
-            )
-            vars.append(var)
-            value5 = build_typed_ast(term['value'], None, scope, vars, binding=binding)
+            if term['value']['kind'] == 'Function':
+                var = scope.declare(term['name']['text'], BOUND_ANY_TYPE)
+                binding = ReferenceExpression(
+                    type_=var.type,
+                    scope=scope,
+                    parent=None,
+                    var=var
+                )
+                value5 = build_typed_ast(term['value'], None, scope, vars, binding=binding)
+            else:
+                value5 = build_typed_ast(term['value'], None, scope, vars)
+                var = scope.declare(term['name']['text'], value5.boundtype)
+                binding = ReferenceExpression(
+                    type_=var.type,
+                    scope=scope,
+                    parent=None,
+                    var=var
+                )
             next_ = build_typed_ast(term['next'], parent, scope, vars)
             exp3 = LetExpression(
                 type_=BOUND_ANY_TYPE,
@@ -1115,6 +1126,7 @@ def build_typed_ast(
                 next=next_
             )
             value5.parent = exp3
+            vars.append(var)
             return exp3
         case _:
             raise ValueError(f"Unknown syntax term '{term['kind']}' at {term['location']}")
