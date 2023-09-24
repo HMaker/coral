@@ -52,13 +52,9 @@ class IBoundType:
         Intersection with UNDEFINED results in UNDEFINED.
         """
         raise NotImplementedError
-    
-    def issupertype(self, other: 'IBoundType') -> bool:
-        """Checks wether this type is a super type of the given one.
-        
-        If a type union includes a super type of the given type, then that union is also a
-        supertype of the given type. ANY is the supertype of every type. A type is supertype of itself.
-        """
+
+    def lowers(self, other: 'IBoundType') -> bool:
+        """Returns True if this type is more specialized than the given type, False otherwise"""
         raise NotImplementedError
     
     def __eq__(self, __value: object) -> bool:
@@ -130,19 +126,13 @@ class BoundType(IBoundType):
             self._native_type,
             tuple(myg.lower(other_generics[i]) for i, myg in enumerate(self._generics))
         )
-
-    def issupertype(self, other: IBoundType) -> bool:
-        if self._native_type == NativeType.UNDEFINED or other.type == NativeType.UNDEFINED:
-            return False
-        if self._native_type == NativeType.ANY:
-            return True
-        if self._native_type != other.type:
-            return False
-        other = t.cast(BoundType, other)
-        other_generics = other.generics
-        if len(self._generics) != len(other_generics):
-            return False
-        return all(my_generic.issupertype(other_generics[i]) for i, my_generic in enumerate(self._generics))
+    
+    def lowers(self, other: IBoundType) -> bool:
+        lower = self.lower(other)
+        return (
+            lower.type != NativeType.ANY and
+            all(generic.type != NativeType.ANY for generic in lower.generics)
+        )
     
     def __eq__(self, o: object) -> bool:
         return type(o) is BoundType and self._native_type == o._native_type and self._generics == o._generics
@@ -230,21 +220,9 @@ class BoundTypeUnion(IBoundType):
                 return BoundType(NativeType.UNDEFINED, ())
             return my_member2.lower(other)
 
-    def issupertype(self, other: IBoundType) -> bool:
-        if other.type == NativeType.ANY or other.type == NativeType.UNDEFINED:
-            return False
-        if other.type == NativeType.UNION:
-            other = t.cast(BoundTypeUnion, other)
-            for other_member in other.members.values():
-                my_member = self._members.get(other_member.type, None)
-                if my_member is None or not my_member.issupertype(other_member):
-                    return False
-            return True
-        else:
-            my_member = self._members.get(other.type, None)
-            if my_member is None:
-                return False
-            return my_member.issupertype(other)
+    def lowers(self, other: IBoundType) -> bool:
+        lower = self.lower(other)
+        return lower.type != NativeType.ANY
 
     def __eq__(self, o: object) -> bool:
         return isinstance(o, BoundTypeUnion) and self._members == o.members
@@ -321,17 +299,16 @@ class BoundFunctionType(IBoundType):
             self._return_type.lower(other.return_type)
         )
 
-    def issupertype(self, other: IBoundType) -> bool:
-        if other.type != NativeType.FUNCTION:
+    def lowers(self, other: IBoundType) -> bool:
+        lower = self.lower(other)
+        if lower.type != NativeType.FUNCTION:
             return False
-        other = t.cast(BoundFunctionType, other)
-        other_params = other.params
+        lower = t.cast(BoundFunctionType, lower)
         return (
-            len(self._params) == len(other.params) and
-            self._return_type.issupertype(other.return_type) and
-            all(my_param.issupertype(other_params[i]) for i, my_param in enumerate(self._params))
+            lower.return_type.type != NativeType.ANY and
+            all(param.type != NativeType.ANY for param in lower.params)
         )
-    
+
     def __eq__(self, value: object) -> bool:
         return (
             isinstance(value, BoundFunctionType) and
@@ -465,6 +442,10 @@ class Expression:
         type validation (the real check) to runtime when the inferred type is UNDEFINED.
         """
         raise NotImplementedError
+    
+    def handle_partial_typecheck(self, type_: IBoundType) -> None:
+        """Called from the children AST nodes to inform of partial results from a typecheck call to them"""
+        pass
 
 
 class LiteralBooleanValue(Expression):
@@ -722,12 +703,11 @@ class TupleExpression(Expression):
                 )
             )
             return self.boundtype
-        else:
-            self.boundtype = BOUND_TUPLE_TYPE
-            return BOUND_UNDEFINED_TYPE
+        self.boundtype = BOUND_TUPLE_TYPE
+        return BOUND_UNDEFINED_TYPE
 
 class FirstExpression(Expression):
-    """First always takes tuples as argument and return their first member"""
+    """First takes tuples as argument and return their first member"""
 
     def __init__(
         self,
@@ -749,7 +729,7 @@ class FirstExpression(Expression):
         return BOUND_UNDEFINED_TYPE
 
 class SecondExpression(Expression):
-    """Second always takes tuples as argument and return their second member"""
+    """Second takes tuples as argument and return their second member"""
 
     def __init__(
         self,
@@ -790,21 +770,13 @@ class ConditionalExpression(Expression):
         self._alternate = alternate
 
     def typecheck(self, supertype: IBoundType) -> IBoundType:
-        # condition must be boolean
         cond = self._cond.typecheck(BOUND_BOOLEAN_TYPE)
         if cond.type != NativeType.BOOLEAN:
             raise TypeError("conditional expressions must have a boolean as test")
-        # here we try to infer the "return" statement of a function from each side of the IF
-        # branch. since rinha has no explicitly keyword for returns we must do this
-        # "lookbehind" workaround
-        if isinstance(self.parent, FunctionExpression):
-            then = self._then.typecheck(supertype)
-            self.parent.typecheck_return(then)
-            alternate = self._alternate.typecheck(supertype)
-            self.parent.typecheck_return(alternate)
-        else:
-            then = self._then.typecheck(supertype)
-            alternate = self._alternate.typecheck(supertype)
+        then = self._then.typecheck(supertype)
+        if self.parent is not None:
+            self.parent.handle_partial_typecheck(then)
+        alternate = self._alternate.typecheck(supertype)
         self.boundtype = then.lower(alternate)
         return self.boundtype
 
@@ -826,7 +798,6 @@ class CallExpression(Expression):
         self._args = args
 
     def typecheck(self, supertype: IBoundType) -> IBoundType:
-        # supertype is the expected call return type
         # we update the called function signature using the call args and the expected return
         signature = self._callee.typecheck(BoundFunctionType(
             tuple(arg.typecheck(BOUND_ANY_TYPE) for arg in self._args),
@@ -836,6 +807,7 @@ class CallExpression(Expression):
             signature = t.cast(BoundFunctionType, signature)
             self.boundtype = signature.return_type
             return signature.return_type
+        self.boundtype = signature
         return signature
 
 
@@ -864,26 +836,23 @@ class FunctionExpression(Expression):
             for i, param in enumerate(self._params):
                 param.typecheck(param_types[i])
             return_type = self._body.typecheck(lowered_signature.return_type)
-            new_signature = BoundFunctionType(
-                tuple(param.boundtype for param in self._params),
-                return_type
-            )
-            lowered_signature2 = new_signature.lower(supertype)
-            if lowered_signature2.type == NativeType.FUNCTION:
-                lowered_signature2 = t.cast(BoundFunctionType, lowered_signature2)
-                self.boundtype = lowered_signature2
-            return lowered_signature2
+            if return_type.lowers(lowered_signature.return_type):
+                self.boundtype = BoundFunctionType(
+                    tuple(param.boundtype for param in self._params),
+                    return_type
+                )
+            else:
+                self.boundtype = BoundFunctionType(
+                    tuple(param.boundtype for param in self._params),
+                    lowered_signature.return_type
+                )
+            return self.boundtype
         return lowered_signature
 
-    def typecheck_return(self, type_: IBoundType) -> IBoundType:
+    def handle_partial_typecheck(self, type_: IBoundType) -> None:
         boundtype = t.cast(BoundFunctionType, self.boundtype)
-        lowered_signature = self.boundtype.lower(BoundFunctionType(boundtype.params, type_))
-        if lowered_signature.type == NativeType.FUNCTION:
-            lowered_signature = t.cast(BoundFunctionType, lowered_signature)
-            if self._binding is not None:
-                self._binding.typecheck(lowered_signature)
-            return lowered_signature.return_type
-        return lowered_signature
+        if self._binding is not None and type_.lowers(boundtype.return_type):
+            self._binding.typecheck(BoundFunctionType(boundtype.params, type_))
 
     def __str__(self) -> str:
         if self._binding is not None:
@@ -916,6 +885,10 @@ class LetExpression(Expression):
         next_ = self._next.typecheck(supertype)
         self.boundtype = next_
         return next_
+    
+    def handle_partial_typecheck(self, type_: IBoundType) -> None:
+        if self.parent is not None:
+            return self.parent.handle_partial_typecheck(type_)
 
 
 class Program:
@@ -1107,6 +1080,7 @@ def build_typed_ast(
                     var=var
                 )
                 value5 = build_typed_ast(term['value'], None, scope, vars, binding=binding)
+                binding.boundtype = value5.boundtype
             else:
                 value5 = build_typed_ast(term['value'], None, scope, vars)
                 var = scope.declare(term['name']['text'], value5.boundtype)

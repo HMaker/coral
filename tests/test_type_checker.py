@@ -393,14 +393,14 @@ STATIC_ERRORS_TESTS: t.List[t.Tuple[str, str, t.Type[Exception]]] = [
 
 
 RECURSIVE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
-    # (
-    #     "function-return-itself",
-    #     """
-    #     let x = fn () => x;
-    #     x
-    #     """,
-    #     ast.BoundFunctionType((), ast.BOUND_ANY_TYPE) # Function<Any>
-    # ),
+    (
+        "function-returns-itself",
+        """
+        let x = fn () => x;
+        x
+        """,
+        ast.BoundFunctionType((), ast.BOUND_ANY_TYPE) # Function<Any>
+    ),
     (
         "fib",
         """
