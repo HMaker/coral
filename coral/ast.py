@@ -445,7 +445,8 @@ class Expression:
     
     def handle_partial_typecheck(self, type_: IBoundType) -> None:
         """Called from the children AST nodes to inform of partial results from a typecheck call to them"""
-        pass
+        if self.parent is not None:
+            return self.parent.handle_partial_typecheck(type_)
 
 
 class LiteralBooleanValue(Expression):
@@ -885,10 +886,6 @@ class LetExpression(Expression):
         next_ = self._next.typecheck(supertype)
         self.boundtype = next_
         return next_
-    
-    def handle_partial_typecheck(self, type_: IBoundType) -> None:
-        if self.parent is not None:
-            return self.parent.handle_partial_typecheck(type_)
 
 
 class Program:
