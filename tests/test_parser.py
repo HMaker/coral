@@ -537,3 +537,7 @@ class ParserTest(unittest.TestCase):
         for test, src, expected in RINHA_PARSER_SAMPLES:
             with self.subTest(test):
                 self.assertDictEqual(parser.parse(src), expected)
+
+
+if __name__ == '__main__':
+    unittest.main()

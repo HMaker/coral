@@ -379,7 +379,7 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
     def string(self, meta: Meta, children: t.List[Token]) -> LiteralSyntax:
         return {
             'kind': 'Str',
-            'value': children[0].value,
+            'value': children[0].value[1:-1],
             'location': {
                 'filename': self.filename,
                 'line': meta.line,

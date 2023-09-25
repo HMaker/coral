@@ -235,7 +235,21 @@ SIMPLE_INFERENCE_TESTS: t.List[t.Tuple[str, str, ast.BoundType]] = [
         (fn (a) => { 1 } )("nothing")
         """,
         ast.BOUND_INTEGER_TYPE
-    )
+    ),
+    (
+        "ignore-declarations",
+        """
+        let _ = true;
+        let _ = 1;
+        let _ = "hello";
+        let _ = (1, 2);
+        let _ = fn () => { "hello" };
+        let _ = print("hello");
+        let _ = first((1, 2));
+        print("bye")
+        """,
+        ast.BOUND_STRING_TYPE
+    ),
 ]
 
 
@@ -386,6 +400,15 @@ STATIC_ERRORS_TESTS: t.List[t.Tuple[str, str, t.Type[Exception]]] = [
         """
         let x = x;
         x
+        """,
+        ValueError
+    ),
+    (
+        "references-ignored-declaration",
+        """
+        let _ = fn () => { "hello" };
+        let _ = print("hello");
+        print(_)
         """,
         ValueError
     )
