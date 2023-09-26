@@ -13,5 +13,7 @@ setup(
         'coral/parser.py',
         'coral/ast.py',
     ]),
+    package_data={'coral': ['runtime.so']},
+    include_package_data=True,
     install_requires=REQUIREMENTS
 )

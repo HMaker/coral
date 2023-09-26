@@ -68,7 +68,11 @@ class BoundType(IBoundType):
     def __init__(self, type_: NativeType, generics: t.Sequence[IBoundType]) -> None:
         self._native_type: t.Final = type_
         self._generics: t.Final = generics
-        self._is_static: t.Final = type_  != NativeType.ANY and type != NativeType.UNDEFINED and all(arg.is_static for arg in generics)
+        self._is_static: t.Final = (
+            type_  != NativeType.ANY and
+            type_ != NativeType.UNDEFINED and
+            all(arg.is_static for arg in generics)
+        )
         self._hashseed: t.Final = (self._native_type, self._generics)
 
     @property
