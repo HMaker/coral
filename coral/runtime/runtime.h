@@ -20,87 +20,178 @@
 
 typedef enum
 {
-    CR_NONE,
+    CR_UNDEFINED,
     CR_BOOL,
     CR_INT,
-    CR_CSTR,
+    CR_STR,
     CR_TUPLE,
     CR_FUNCTION
 } CRType;
 
-typedef struct CRValue {
+typedef struct CRObject {
   CRType _type;
   unsigned long _refCount;
   void* value;
-  void (*valueDestructor) (struct CRValue*);
-} CRValue;
+} CRObject;
 
 typedef struct {
     const char* value;
     size_t length;
-    bool allocated;
+    bool owner;
 } CRString;
 
 typedef struct {
-    CRValue* first;
-    CRValue* second;
+    CRObject* first;
+    CRObject* second;
 } CRTuple;
 
 typedef struct {
     uint16_t arity;
-    CRValue* nonlocals;
+    CRObject** globals;
+    CRObject* (*func) (CRObject*, ...);
 } CRFunction;
 
 
-static inline CRValue* CRValue_new(void);
-inline void CRValue_incref(CRValue* self);
-void CRValue_decref(CRValue* self);
+CRObject* CRObject_new(void);
+inline CRType CRObject_getType(CRObject* self) {
+    CR_NOT_NULL(self);
+    if ((uint64_t)self & TAGGED_PTR_INT) {
+        return CR_INT;
+    } else if ((uint64_t)self & TAGGED_PTR_BOOL) {
+        return CR_BOOL;
+    } else {
+        return self->_type;
+    }
+}
+inline void CRObject_incref(CRObject* self) {
+    CRType type = CRObject_getType(self);
+    if (type == CR_INT || type == CR_BOOL) return;
+    self->_refCount++;
+}
+void CRObject_decref(CRObject* self);
 
-static inline CRType CRValue_getType(CRValue* self);
-static const char* CRValue_getTypeName(CRValue* self);
-static CRValue* CRValue_getTypeRepr(CRValue* self);
-void CRValue_print(CRValue* self);
-
-static inline CRValue* CRValue_newInt(int64_t value);
-static inline int64_t CRValue_asInt(CRValue* self);
-CRValue* CRValue_add(CRValue* self, CRValue* other);
-inline CRValue* CRValue_sub(CRValue* self, CRValue* other);
-inline CRValue* CRValue_mul(CRValue* self, CRValue* other);
-inline CRValue* CRValue_div(CRValue* self, CRValue* other);
-inline CRValue* CRValue_mod(CRValue* self, CRValue* other);
-
-static inline CRValue* CRValue_newBool(bool value);
-static inline bool CRValue_asBool(CRValue* self);
-inline CRValue* CRValue_lessThan(CRValue* self, CRValue* other);
-inline CRValue* CRValue_lessOrEqual(CRValue* self, CRValue* other);
-inline CRValue* CRValue_greaterThan(CRValue* self, CRValue* other);
-inline CRValue* CRValue_greaterOrEqual(CRValue* self, CRValue* other);
-inline CRValue* CRValue_and(CRValue* self, CRValue* other);
-inline CRValue* CRValue_or(CRValue* self, CRValue* other);
-CRValue* CRValue_equals(CRValue* self, CRValue* other);
-inline CRValue* CRValue_notEquals(CRValue* self, CRValue* other);
-
-CRValue* CRString_new(const char* value, bool allocated);
-CRValue* CRString_newCopy(const char* value, size_t length);
-static void CRString_destroyValue(CRValue* self);
-/**
- * Borrows a pointer to the string contents. The pointer has the same lifetime
- * of this object.
-*/
-inline const char* CRValue_asString(CRValue* self);
-
-CRValue* CRTuple_new(CRValue* first, CRValue* second);
-static void CRTuple_destroyValue(CRValue* self);
-/**
- * Borrows a pointer to the tuple contents. The pointer has the same lifetime
- * of this object.
-*/
-static inline const CRTuple* CRValue_asTuple(CRValue* self);
-inline CRValue* CRTuple_getFirst(CRValue* self);
-inline CRValue* CRTuple_getSecond(CRValue* self);
+const char* CRObject_getTypeName(CRObject* self);
+CRObject* CRObject_getTypeRepr(CRObject* self);
+void CRObject_print(CRObject* self);
 
 
-CRValue* CRFunction_call(CRValue* self, ...);
+/**********************************************************************************************
+ * INTEGER
+**********************************************************************************************/
+
+inline CRObject* CRObject_newInt(int64_t value) {
+    int64_t obj = 0;
+    obj |= TAGGED_PTR_INT;
+    obj |= value << TAGGED_PTR_SHIFT;
+    return (CRObject*)obj;
+}
+inline int64_t CRObject_asInt(CRObject* self) {
+    CRType type = CRObject_getType(self);
+    if (type != CR_INT) {
+        CR_ABORT("FATAL: expected int, but got %s\n", CRObject_getTypeName(self))
+        return 0;
+    }
+    return (int64_t)self >> TAGGED_PTR_SHIFT;
+}
+CRObject* CRObject_add(CRObject* self, CRObject* other);
+inline CRObject* CRObject_sub(CRObject* self, CRObject* other) {
+    return CRObject_newInt(CRObject_asInt(self) - CRObject_asInt(other));
+}
+inline CRObject* CRObject_mul(CRObject* self, CRObject* other) {
+    return CRObject_newInt(CRObject_asInt(self) * CRObject_asInt(other));
+}
+inline CRObject* CRObject_div(CRObject* self, CRObject* other) {
+    return CRObject_newInt(CRObject_asInt(self) / CRObject_asInt(other));
+}
+inline CRObject* CRObject_mod(CRObject* self, CRObject* other) {
+    return CRObject_newInt(CRObject_asInt(self) % CRObject_asInt(other));
+}
+
+
+/**********************************************************************************************
+ * BOOLEAN
+**********************************************************************************************/
+
+inline CRObject* CRObject_newBool(bool value) {
+    int64_t obj = 0;
+    obj |= TAGGED_PTR_BOOL;
+    obj |= (int64_t)value << TAGGED_PTR_SHIFT;
+    return (CRObject*)obj;
+}
+inline bool CRObject_asBool(CRObject* self) {
+    CRType type = CRObject_getType(self);
+    if (type != CR_BOOL) {
+        CR_ABORT("FATAL: expected bool, but got %s\n", CRObject_getTypeName(self));
+        return false;
+    }
+    return (int64_t)self >> TAGGED_PTR_SHIFT;
+}
+inline CRObject* CRObject_lessThan(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asInt(self) < CRObject_asInt(other));
+}
+inline CRObject* CRObject_lessOrEqual(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asInt(self) <= CRObject_asInt(other));
+}
+inline CRObject* CRObject_greaterThan(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asInt(self) > CRObject_asInt(other));
+}
+inline CRObject* CRObject_greaterOrEqual(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asInt(self) >= CRObject_asInt(other));
+}
+inline CRObject* CRObject_and(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asBool(self) && CRObject_asBool(other));
+}
+inline CRObject* CRObject_or(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asBool(self) || CRObject_asBool(other));
+}
+CRObject* CRObject_equals(CRObject* self, CRObject* other);
+inline CRObject* CRObject_notEquals(CRObject* self, CRObject* other) {
+    return CRObject_newBool(!CRObject_asBool(CRObject_equals(self, other)));
+}
+
+
+/**********************************************************************************************
+ * STRING
+**********************************************************************************************/
+
+CRObject* CRString_new(const char* value, bool owner);
+CRObject* CRString_newCopy(const char* value, size_t length);
+void CRString_destroy(CRString* self);
+CRObject* CRString_concat(CRObject* self, CRObject* other);
+CRObject* CRString_equals(CRString* self, CRString* other);
+inline const char* CRObject_asString(CRObject* self) {
+    if (CRObject_getType(self) != CR_STR) {
+        CR_ABORT("FATAL: expected string. but got %s\n", CRObject_getTypeName(self))
+        return NULL;
+    }
+    return ((CRString*)self->value)->value;
+}
+CRObject* CRString_repr(CRString* self);
+
+
+/**********************************************************************************************
+ * TUPLE
+**********************************************************************************************/
+
+CRObject* CRTuple_new(CRObject* first, CRObject* second);
+void CRTuple_destroy(CRTuple* self);
+inline const CRTuple* CRObject_asTuple(CRObject* self) {
+    if (CRObject_getType(self) != CR_TUPLE) {
+        CR_ABORT("FATAL: expected tuple, but got %s\n", CRObject_getTypeName(self));
+        return NULL;
+    }
+    return self->value;
+}
+CRObject* CRTuple_getFirst(CRObject* self);
+CRObject* CRTuple_getSecond(CRObject* self);
+CRObject* CRTuple_repr(CRTuple* self);
+
+
+/**********************************************************************************************
+ * FUNCTION
+**********************************************************************************************/
+
+CRObject* CRFunction_call(CRObject* self, ...);
 
 
 #endif

@@ -8,4 +8,4 @@ python:
 	python ./setup.py bdist_wheel
 
 runtime:
-	${CLANG} -shared -fPIC -O3 -I./coral/runtime -o ./coral/runtime.so ./coral/runtime/runtime.c
+	${CLANG} -shared -fPIC -O3 -I./coral/runtime -o ./coral/runtime.so ./coral/runtime/*.c
