@@ -60,7 +60,6 @@ typedef struct {
     unsigned short arity;
     CRObjectArray* globals;
     CRObject* (*fp) (CRObject**, CRObject**);
-    void* llfp;
 } CRFunction;
 
 
@@ -213,8 +212,7 @@ CRObject* CRObjectArray_get(CRObjectArray* self, size_t index);
 CRObject* CRFunction_new(
     size_t globalsSize,
     unsigned short arity,
-    CRObject* (*fp) (CRObject**, CRObject**),
-    void* llfp
+    CRObject* (*fp) (CRObject**, CRObject**)
 );
 void CRFunction_destroy(CRFunction* self);
 void CRFunction_setGlobal(CRObject* self, size_t index, CRObject* global);

@@ -1,5 +1,4 @@
 from setuptools import setup
-from mypyc.build import mypycify
 
 
 with open('requirements.txt', 'r') as file:
@@ -8,11 +7,6 @@ with open('requirements.txt', 'r') as file:
 setup(
     name='coral',
     packages=['coral'],
-    ext_modules=mypycify([
-        'coral/__init__.py',
-        'coral/parser.py',
-        'coral/ast.py',
-    ]),
     package_data={'coral': ['runtime.so']},
     include_package_data=True,
     install_requires=REQUIREMENTS

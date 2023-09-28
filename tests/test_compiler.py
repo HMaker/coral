@@ -6,10 +6,19 @@ IR_COMPILER_TESTS = (
     (
         "debug",
         """
-        let sum = fn (a, b) => {
-            fn () => { a + b }
-        };
-        print(sum)
+let fibrec = fn (n, k1, k2) => {
+    if (n == 0) {
+        k1
+    } else {
+        if (n == 1) {
+            k2
+        } else {
+            fibrec(n - 1, k2, k1 + k2)
+        }
+    }
+};
+fibrec(10, 0, 1)
+
         """
     ),
     # (

@@ -1,4 +1,3 @@
-import typing as t
 import orjson
 import argparse
 from coral import parser, ast, compiler

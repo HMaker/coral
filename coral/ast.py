@@ -495,26 +495,22 @@ class ReferenceExpression(Expression):
         parent: t.Optional['Expression'],
         var: ScopeVar
     ) -> None:
-        self._var = var
         super().__init__(type_, scope, parent)
-
-    @property
-    def boundtype(self) -> IBoundType:
-        return self._var.type
-
-    @boundtype.setter
-    def boundtype(self, v: IBoundType) -> None:
-        self._var.may_change(v)
+        self._var = var
 
     @property
     def name(self) -> str:
         return self._var.name
+    
+    def update_type(self, v: IBoundType) -> None:
+        self._var.may_change(v)
+        self.boundtype = self._var.type
 
     def typecheck(self, supertype: IBoundType) -> IBoundType:
         # variables just try to embed the supertype constraint, this is how we propagate type hints
         # down the AST
-        self._var.may_change(self._var.type.lower(supertype))
-        return self._var.type
+        self.update_type(self._var.type.lower(supertype))
+        return self.boundtype
 
 
 class BinaryOperator(enum.Enum):
@@ -1074,7 +1070,7 @@ def build_typed_ast(
                     var=var
                 )
                 value5 = build_typed_ast(term['value'], None, scope, vars, binding=binding)
-                binding.boundtype = value5.boundtype
+                binding.update_type(value5.boundtype)
                 vars.append(var)
             else:
                 value5 = build_typed_ast(term['value'], None, scope, vars)

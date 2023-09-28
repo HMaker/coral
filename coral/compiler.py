@@ -61,7 +61,6 @@ class CoralRuntime:
         crfunction_struct: ir.IdentifiedStructType,
         crfunction_new: ir.Function,
         crfunction_set_global: ir.Function,
-        crfunction_get_globals_array: ir.Function,
         crfunction_call: ir.Function,
     ) -> None:
         self.crobject_struct: t.Final = crobject_struct
@@ -98,7 +97,6 @@ class CoralRuntime:
         self.crfunction_struct: t.Final = crfunction_struct
         self.crfunction_new: t.Final = crfunction_new
         self.crfunction_set_global: t.Final = crfunction_set_global
-        self.crfunction_get_globals_array: t.Final = crfunction_get_globals_array
         self.crfunction_call: t.Final = crfunction_call
 
     @classmethod
@@ -275,20 +273,20 @@ class CoralRuntime:
         )
 
         crfunction_struct = mod.context.get_identified_type('struct.CRFunction')
+        crfunction_fp = ir.FunctionType( # CRObject* (*fp) (CRObject**, CRObject**)
+            args=(crobject_struct_ptr.as_pointer(), crobject_struct_ptr.as_pointer()),
+            return_type=crobject_struct_ptr
+        ).as_pointer()
         crfunction_struct.set_body(
             LL_INT16,                          # unsigned short arity
             crobjectarray_struct.as_pointer(), # CRObjectArray* globals
-            ir.FunctionType(                   # CRObject* (*fp) (CRObject**, CRObject**);
-                args=(crobject_struct_ptr.as_pointer(), crobject_struct_ptr.as_pointer()),
-                return_type=crobject_struct_ptr
-            ).as_pointer(),
-            LL_CHAR.as_pointer()               # void* llfp
+            crfunction_fp
         )
         crfunction_new = ir.Function(
             name='CRFunction_new',
             module=mod,
             ftype=ir.FunctionType(
-                args=[LL_INT, LL_INT16, LL_CHAR.as_pointer(), LL_CHAR.as_pointer()],
+                args=[LL_INT, LL_INT16, crfunction_fp],
                 return_type=crobject_struct_ptr
             )
         )
@@ -298,14 +296,6 @@ class CoralRuntime:
             ftype=ir.FunctionType(
                 args=[crobject_struct_ptr, LL_INT, crobject_struct_ptr],
                 return_type=ir.VoidType()
-            )
-        )
-        crfunction_get_globals_array = ir.Function(
-            name='CRFunction_getGlobalsArray',
-            module=mod,
-            ftype=ir.FunctionType(
-                args=[crobject_struct_ptr],
-                return_type=crobject_struct_ptr.as_pointer()
             )
         )
         crfunction_call = ir.Function(
@@ -354,19 +344,8 @@ class CoralRuntime:
             crfunction_struct=crfunction_struct,
             crfunction_new=crfunction_new,
             crfunction_set_global=crfunction_set_global,
-            crfunction_get_globals_array=crfunction_get_globals_array,
             crfunction_call=crfunction_call
         )
-
-    def get_function_llfp(self, crobject: ir.Value, builder: ir.IRBuilder) -> ir.Value:
-        """Returns void* ptr to the llfp value of the given function.
-        No validation is performed against the pointer, this is a raw memory address load."""
-        crobject_value_gep = builder.gep(crobject, indices=[LL_INT32(0), LL_INT32(2)], inbounds=True)
-        crobject_value = builder.load(crobject_value_gep, align=8)
-        crfunction_ptr = builder.bitcast(crobject_value, self.crfunction_struct.as_pointer())
-        crfunction_llfp_gep = builder.gep(crfunction_ptr, indices=[LL_INT32(0), LL_INT32(3)], inbounds=True)
-        crfunction_llfp = builder.load(crfunction_llfp_gep, align=8)
-        return crfunction_llfp
 
     def get_function_globals(self, crobject: ir.Value, builder: ir.IRBuilder) -> ir.Value:
         """Returns CRObject** ptr to the __globals__ array of the given function.
@@ -444,7 +423,7 @@ class CoralObject:
         self.boxed: t.Final = boxed
         self.scope: t.Final = scope
 
-    def box(self) -> 'CoralObject':
+    def box(self) -> t.Self:
         """Creates a NEW boxed version of this object if it is UNBOXED. Returns the boxed object.
         
         Returns itself if it's already boxed. Boxing MUST be tracked by the GC.
@@ -453,7 +432,7 @@ class CoralObject:
             return self
         raise NotImplementedError
 
-    def unbox(self) -> 'CoralObject':
+    def unbox(self) -> t.Self:
         """Creates a NEW unboxed version of this object if it is BOXED. Returns the unboxed object.
         
         Returns itself if it's already unboxed. Nothing is done with the boxed version, we hope the
@@ -496,7 +475,15 @@ class CoralObject:
                     boxed=True,
                     scope=scope
                 )
-            # we dont wrap functions from memory values because we dont know if it needs any global
+            case ast.NativeType.FUNCTION:
+                boundtype = t.cast(CoralFunctionType, boundtype)
+                return CoralFunction(
+                    type_=boundtype,
+                    lltype=value.type,
+                    value=value,
+                    boxed=True,
+                    scope=scope
+                )
             case _:
                 return CoralObject(
                     type_=ast.BOUND_UNDEFINED_TYPE,
@@ -590,7 +577,7 @@ class CoralInteger(CoralObject):
             boxed=True,
             scope=self.scope
         )
-    
+
     def unbox(self) -> 'CoralInteger':
         if not self.boxed: return self
         intptr = self.scope.builder.ptrtoint(self.value, LL_INT)
@@ -973,7 +960,7 @@ class CoralString(CoralObject):
             scope=self.scope
         ))
 
-    def unbox(self) -> CoralObject:
+    def unbox(self) -> t.Self:
         # we dont unbox strings since we can't do anything meaningful with it
         return self
 
@@ -982,7 +969,7 @@ class CoralTuple(CoralObject):
 
     def __init__(
         self,
-        type_: ast.BoundType,
+        type_: ast.IBoundType,
         lltype: ir.Type,
         value: ir.Value,
         boxed: bool,
@@ -993,12 +980,24 @@ class CoralTuple(CoralObject):
         super().__init__(type_, lltype, value, boxed, scope)
         if (first is None or second is None) and not boxed:
             raise ValueError("unboxed tuples must have its members defined")
-        self.first: t.Final = first
-        self.second: t.Final = second
+        self._first: t.Final = first
+        self._second: t.Final = second
+
+    @property
+    def ensure_first(self) -> CoralObject:
+        if self._first is None:
+            raise ValueError("missing first member of tuple")
+        return self._first
+    
+    @property
+    def ensure_second(self) -> CoralObject:
+        if self._second is None:
+            raise ValueError("missing second member of tuple")
+        return self._second
 
     def instance_get_first(self) -> CoralObject:
         if not self.boxed:
-            first = t.cast(CoralObject, self.first)
+            first = t.cast(CoralObject, self._first)
             return first
         return CoralObject.wrap_boxed_value(
             boundtype=self.boundtype.generics[0],
@@ -1008,8 +1007,7 @@ class CoralTuple(CoralObject):
 
     def instance_get_second(self) -> CoralObject:
         if not self.boxed:
-            second = t.cast(CoralObject, self.second)
-            return second
+            return self.ensure_second
         return CoralObject.wrap_boxed_value(
             boundtype=self.boundtype.generics[1],
             value=self.scope.runtime.get_tuple_second(self.value, self.scope.builder),
@@ -1018,8 +1016,8 @@ class CoralTuple(CoralObject):
 
     def box(self) -> 'CoralTuple':
         if self.boxed: return self
-        first = self.first.box()
-        second = self.second.box()
+        first = self.ensure_first.box()
+        second = self.ensure_second.box()
         return self.scope.collect_object(CoralTuple(
             type_=self.boundtype,
             lltype=self.scope.runtime.crtuple_new.ftype.return_type,
@@ -1069,17 +1067,17 @@ class CoralTuple(CoralObject):
         then_value = t.cast(CoralTuple, then_value)
         else_value = t.cast(CoralTuple, else_value)
         if not then_value.boxed:
-            first = then_value.first.merge_branch(
-                then_value=then_value.first,
+            first = then_value.ensure_first.merge_branch(
+                then_value=then_value.ensure_first,
                 then_block=then_block,
-                else_value=else_value.first,
+                else_value=else_value.ensure_first,
                 else_block=else_block,
                 scope=scope
             )
-            second = then_value.second.merge_branch(
-                then_value=then_value.second,
+            second = then_value.ensure_second.merge_branch(
+                then_value=then_value.ensure_second,
                 then_block=then_block,
-                else_value=else_value.second,
+                else_value=else_value.ensure_second,
                 else_block=else_block,
                 scope=scope
             )
@@ -1150,16 +1148,44 @@ class CoralTuple(CoralObject):
         )
 
     def __hash__(self) -> int:
-        return hash((self.first, self.second, self.value, self.boxed))
+        return hash((self._first, self._second, self.value, self.boxed))
 
     def __eq__(self, other: object) -> bool:
         return (
             isinstance(other, CoralTuple) and
             self.boxed == other.boxed and
-            self.first == other.first and
-            self.second == other.second
+            self._first == other._first and
+            self._second == other._second
         )
 
+
+class CoralFunctionType(ast.BoundFunctionType):
+    """Extends BoundFunctionType to add info about the compiled LLVM function"""
+
+    def __init__(
+        self,
+        params: t.Sequence[ast.IBoundType],
+        return_type: ast.IBoundType,
+        llfunc: t.Optional[ir.Function] = None,
+        has_globals: bool = False,
+        name: t.Optional[str] = None
+    ) -> None:
+        super().__init__(params, return_type)
+        self.llfunc: t.Final = llfunc
+        self.has_globals: t.Final = has_globals
+        self.name: t.Final = name
+
+    def __eq__(self, value: object) -> bool:
+        return (
+            super().__eq__(value) and
+            isinstance(value, CoralFunctionType) and
+            value.name == self.name and
+            value.has_globals == self.has_globals and
+            value.llfunc == self.llfunc
+        )
+
+    def __hash__(self) -> int:
+        return hash(self.llfunc)
 
 class CoralFunction(CoralObject):
     """Functions are always "boxed", but the call to the native function definition can be directly
@@ -1186,21 +1212,19 @@ class CoralFunction(CoralObject):
     def __init__(
         self,
         *,
-        type_: ast.IBoundType,
+        type_: CoralFunctionType,
         lltype: ir.FunctionType,
         value: ir.Value,
         boxed: bool,
         scope: 'CoralFunctionCompilation',
-        name: t.Optional[str] = None,
-        llfunc_ptr: t.Optional[ir.Value] = None,
-        globals_ptr: t.Optional[ir.Value] = None,
-        has_globals: bool = False
+        globals_ptr: t.Optional[ir.Value] = None
     ) -> None:
         super().__init__(type_, lltype, value, boxed, scope)
-        self.name: t.Final = name
-        self.llfunc_ptr: t.Final = llfunc_ptr
         self.globals_ptr: t.Final = globals_ptr
-        self.has_globals: t.Final = has_globals
+
+    @property
+    def function_type(self) -> CoralFunctionType:
+        return t.cast(CoralFunctionType, self.boundtype)
 
     @classmethod
     def call(
@@ -1216,29 +1240,40 @@ class CoralFunction(CoralObject):
                 value=scope.builder.call(
                     fn=scope.runtime.crfunction_call,
                     # CRObject* self, size_t argscount, varargs...
-                    args=[callee.value, len(args)] + [arg.value for arg in args]
+                    args=[callee.value, LL_INT(len(args))] + [arg.value for arg in args]
                 ),
                 boxed=True,
                 scope=scope
             ))
         callee = t.cast(CoralFunction, callee)
-        unboxed = callee.unbox()
-        boundtype = t.cast(ast.BoundFunctionType, unboxed.boundtype)
-        lltype = t.cast(ir.FunctionType, unboxed.lltype)
-        if callee.has_globals:
+        boundtype = callee.function_type
+        # if we don't know the static function, we need to dispatch the call dynamically
+        if boundtype.llfunc is None:
+            return scope.collect_object(CoralObject.wrap_boxed_value(
+                boundtype=boundtype.return_type,
+                value=scope.builder.call(
+                    fn=scope.runtime.crfunction_call,
+                    # CRObject* self, size_t argscount, varargs...
+                    args=[callee.value, LL_INT(len(args))] + [arg.value for arg in args]
+                ),
+                scope=scope
+            ))
+        callee = callee.unbox()
+        lltype = t.cast(ir.FunctionType, boundtype.llfunc.ftype)
+        if boundtype.has_globals:
             param_types = lltype.args[1:] # remove the __globals__
         else:
             param_types = lltype.args
         if len(args) != len(param_types):
-            raise TypeError(f"{callee.name} expects '{len(param_types)}' arguments, but got {len(args)}")
+            raise TypeError(f"{boundtype.name} expects '{len(param_types)}' arguments, but got {len(args)}")
         crobject_ptr = scope.runtime.crobject_struct.as_pointer()
         raw_args = [
             arg.box().value if param_types[i] == crobject_ptr else arg.unbox().value
             for i, arg in enumerate(args)
         ]
-        if callee.has_globals:
+        if boundtype.has_globals:
             raw_args.insert(0, callee.globals_ptr)
-        raw_return_value = scope.builder.call(fn=unboxed.llfunc_ptr, args=raw_args)
+        raw_return_value = scope.builder.call(fn=boundtype.llfunc, args=raw_args)
         match boundtype.return_type.type:
             case ast.NativeType.INTEGER:
                 return CoralInteger(
@@ -1267,56 +1302,44 @@ class CoralFunction(CoralObject):
     def box(self) -> 'CoralFunction':
         if self.boxed: return self
         return CoralFunction(
-            type_=self.boundtype,
+            type_=self.function_type,
             lltype=self.scope.runtime.crobject_struct.as_pointer(),
             value=self.value,
             boxed=True,
             scope=self.scope,
-            name=self.name,
-            llfunc_ptr=None,
-            globals_ptr=None,
-            has_globals=self.has_globals
+            globals_ptr=None
         )
 
     def unbox(self) -> 'CoralFunction':
         if not self.boxed: return self
-        lltype: ir.FunctionType = self.scope.runtime.get_llvm_type(self.boundtype)
-        if self.has_globals:
-            lltype.args = (
-                self.scope.runtime.crobject_struct.as_pointer().as_pointer(), # __globals__
-                *lltype.args
-            )
+        # we need the globals ptr only if we can do static call dispatch
+        boundtype = self.function_type
+        if boundtype.llfunc is not None and boundtype.has_globals:
             globals_ptr = self.scope.runtime.get_function_globals(self.value, self.scope.builder)
         else:
             globals_ptr = None
         return CoralFunction(
-            type_=self.boundtype,
-            lltype=lltype,
+            type_=boundtype,
+            lltype=self.value.type,
             value=self.value,
             boxed=False,
             scope=self.scope,
-            name=self.name,
-            llfunc_ptr=self.scope.builder.bitcast(
-                self.scope.runtime.get_function_llfp(self.value, self.scope.builder),
-                lltype.as_pointer()
-            ),
-            globals_ptr=globals_ptr,
-            has_globals=self.has_globals
+            globals_ptr=globals_ptr
         )
 
     def __hash__(self) -> int:
-        return hash((self.name, self.boxed, self.value))
+        return hash((self.boundtype, self.boxed, self.value))
 
-    def __eq__(self, other: object):
+    def __eq__(self, other: object) -> bool:
         return (
             isinstance(other, CoralFunction) and
-            other.name == self.name and
+            other.boundtype == self.boundtype and
             other.boxed == self.boxed and
             other.value == self.value
         )
 
 
-_T = t.TypeVar('_T', bound='CoralObject')
+_T = t.TypeVar('_T', bound=CoralObject)
 class CoralFunctionCompilation:
     """Working context for single function compilation"""
 
@@ -1324,7 +1347,7 @@ class CoralFunctionCompilation:
         self,
         *,
         globals_ptr: ir.NamedValue, # CRObject**
-        globals_index: t.Dict[str, ast.GlobalVar],
+        globals_index: t.Dict[str, ast.ScopeVar],
         return_type: ir.Type,
         return_boxed: bool,
         scope_path: str,
@@ -1338,7 +1361,7 @@ class CoralFunctionCompilation:
         self.return_boxed: t.Final = return_boxed
         self.vars: t.Final[t.Dict[str, CoralObject]] = {}
         self.scope_path: t.Final = scope_path
-        self.functions_count: t.Final = functions_count
+        self.functions_count = functions_count
         self.builder: t.Final = builder
         self.entryblock: t.Final[ir.Block] = builder.block
         self.runtime: t.Final = runtime
@@ -1364,9 +1387,9 @@ class CoralFunctionCompilation:
         varindex = self.globals_index.get(name, None)
         if varindex is None:
             raise ValueError(f"the name '{name}' is not defined")
-        # load the global var
+        # globals are always boxed, but we can unbox them if we know their type
         globalvar = CoralObject.wrap_boxed_value(
-            boundtype=varindex.var.type,
+            boundtype=varindex.type,
             value=self.builder.load(
                 self.builder.gep(
                     self.globals_ptr,
@@ -1399,10 +1422,12 @@ class CoralFunctionCompilation:
             self.handle_gc_cleanup()
             self.builder.ret(result.value)
             self._returns_count += 1
+            return result
         elif result.lltype == self.return_type:
             self.handle_gc_cleanup()
             self.builder.ret(result.value)
             self._returns_count += 1
+            return result
         else:
             raise TypeError(f"expected return type '{self.return_type}', but got '{result.lltype}'")
 
@@ -1442,7 +1467,7 @@ class CoralCompiler:
         self._program = program
         self._engine = engine
         self._module: t.Optional[ir.Module] = None
-        self._ll_module: t.Optional[llvm.ModuleRef] = None
+        self._llmodule: t.Optional[llvm.ModuleRef] = None
         self._strings: t.Dict[str, ir.GlobalVariable] = {}
 
     @classmethod
@@ -1457,13 +1482,13 @@ class CoralCompiler:
         """Compiles the program to machine code with MCJIT and returns a Python callable which runs the
         compiled code when called.
         """
-        if self._ll_module is not None:
+        if self._llmodule is not None:
             self._engine.run_static_destructors()
-            self._engine.remove_module(self._ll_module)
-            self._ll_module.close()
-            self._ll_module = None
-        self._ll_module = llvm.parse_assembly(str(self.compile_ir()))
-        self._engine.add_module(self._ll_module)
+            self._engine.remove_module(self._llmodule)
+            self._llmodule.close()
+            self._llmodule = None
+        self._llmodule = llvm.parse_assembly(str(self.compile_ir()))
+        self._engine.add_module(self._llmodule)
         self._engine.finalize_object()
         self._engine.run_static_constructors()
         return c.CFUNCTYPE(restype=None)(self._engine.get_function_address('__main__'))
@@ -1625,15 +1650,37 @@ class CoralCompiler:
                 ir.Argument(llfunc, llfunc_type.args[i], name=param.name)
                 for i, param in enumerate(node.params)
             ])
+        # adapt the function type to include LLVM function
+        boundtype = CoralFunctionType(
+            params=boundtype.params,
+            return_type=boundtype.return_type,
+            llfunc=llfunc,
+            has_globals=has_globals,
+            name=myname
+        )
         child_entry = llfunc.append_basic_block('entry')
         child_builder = ir.IRBuilder(child_entry)
         if has_globals:
             child_globals_ptr = llfunc.args[0]
         else:
             child_globals_ptr = ir.Constant(crobject_struct_ptr.as_pointer(), 0)
+        # forward static types information from parent globals
+        child_globals_index = {
+            globalvar.var.name: ast.ScopeVar(
+                type_=globalvar.var.type,
+                name=globalvar.var.name,
+                index=globalvar.index
+            )
+            for globalvar in node.scope.globals.values()
+        }
+        for globalvar in scope.globals_index.values():
+            child_globals_index[globalvar.name].type = globalvar.type
+        if myname is not None and myname in child_globals_index:
+            child_globals_index[myname].type = boundtype
+        # compile the function body
         child_scope = CoralFunctionCompilation(
             globals_ptr=child_globals_ptr,
-            globals_index=node.scope.globals,
+            globals_index=child_globals_index,
             return_type=llfunc_type.return_type,
             return_boxed=llfunc_type.return_type == crobject_struct_ptr,
             scope_path=llname,
@@ -1647,6 +1694,7 @@ class CoralCompiler:
         else:
             llfunc_real_params = llfunc.args
         for i, param in enumerate(node.params):
+            paramvar: CoralObject
             match param.boundtype.type:
                 case ast.NativeType.INTEGER:
                     paramvar = CoralInteger(
@@ -1682,8 +1730,13 @@ class CoralCompiler:
                         scope=child_scope
                     )
                 case ast.NativeType.FUNCTION:
+                    boundfunc = t.cast(ast.BoundFunctionType, param.boundtype)
                     paramvar = CoralFunction(
-                        type_=param.boundtype,
+                        # we can't do static call dispatch for functions passed through parameters
+                        type_=CoralFunctionType(
+                            params=boundfunc.params,
+                            return_type=boundfunc.return_type
+                        ),
                         lltype=llfunc_real_params[i].type,
                         value=llfunc_real_params[i],
                         boxed=True,
@@ -1706,79 +1759,81 @@ class CoralCompiler:
         child_scope.handle_gc_finalization()
         scope.functions_count += 1
 
-        # create the variadic args wrapper, we need this for the dynamic call though CRFunction_call()
-        llfunc_vararg_type = ir.FunctionType(
+        # create the wrapper for the dynamic call dispatch through CRFunction_call()
+        # it will extract the args from __varargs__, do the static dispatch and box the return
+        # implements CRObject* (*fp) (CRObject**, CRObject**)
+        llfunc_dynamic_type = ir.FunctionType(
             args=(
                 crobject_struct_ptr.as_pointer(), # __globals__
                 crobject_struct_ptr.as_pointer()  # __varargs__
             ),
             return_type=crobject_struct_ptr
         )
-        llfunc_vararg = ir.Function(
-            name=f'{llname}__varargs',
-            ftype=llfunc_vararg_type,
+        llfunc_dynamic = ir.Function(
+            name=f'{llname}__dynamic',
+            ftype=llfunc_dynamic_type,
             module=self._module,
         )
-        llfunc_vararg.args = (
-            ir.Argument(llfunc_vararg, llfunc_vararg_type.args[0], name='__globals__'),
-            ir.Argument(llfunc_vararg, llfunc_vararg_type.args[1], name='__varargs__')
+        llfunc_dynamic.args = (
+            ir.Argument(llfunc_dynamic, llfunc_dynamic_type.args[0], name='__globals__'),
+            ir.Argument(llfunc_dynamic, llfunc_dynamic_type.args[1], name='__varargs__')
         )
-        vararg_builder = ir.IRBuilder(llfunc_vararg.append_basic_block('entry'))
-        vararg_scope = CoralFunctionCompilation(
-            globals_ptr=llfunc_vararg.args[0],
+        dynamic_builder = ir.IRBuilder(llfunc_dynamic.append_basic_block('entry'))
+        dynamic_scope = CoralFunctionCompilation(
+            globals_ptr=llfunc_dynamic.args[0],
             globals_index={},
-            return_type=llfunc_vararg_type.return_type,
+            return_type=llfunc_dynamic_type.return_type,
             return_boxed=True,
             scope_path='',
             functions_count=0,
-            builder=vararg_builder,
+            builder=dynamic_builder,
             runtime=scope.runtime
         )
-        vararg_forward = []
+        dynamic_wrapper_forward = []
         for i, param in enumerate(node.params):
             # we unbox integers and booleans
-            vararg_arg = vararg_builder.load(
-                vararg_builder.gep(
-                    ptr=llfunc_vararg.args[1], # __varargs__
-                    indices=[ir.Constant(LL_INT, i)],
+            vararg_arg = dynamic_builder.load(
+                dynamic_builder.gep(
+                    ptr=llfunc_dynamic.args[1], # __varargs__
+                    indices=[LL_INT(i)],
                     inbounds=False
                 )
             )
             if param.boundtype.type == ast.NativeType.INTEGER or param.boundtype.type == ast.NativeType.BOOLEAN:
-                vararg_forward.append(CoralInteger(
+                dynamic_wrapper_forward.append(CoralInteger(
                     type_=param.boundtype,
                     lltype=LL_INT,
                     value=vararg_arg,
                     boxed=True,
-                    scope=vararg_scope
+                    scope=dynamic_scope
                 ).unbox().value)
             else:
-                vararg_forward.append(vararg_arg)
+                dynamic_wrapper_forward.append(vararg_arg)
         if has_globals:
-            vararg_forward.insert(0, llfunc_vararg.args[0]) # __globals__
+            dynamic_wrapper_forward.insert(0, llfunc_dynamic.args[0]) # __globals__
         # box the return if needed since the vararg wrappers returns CRObject*
-        if llfunc_type.return_type != llfunc_vararg_type.return_type:
+        if llfunc_type.return_type != llfunc_dynamic_type.return_type:
             if boundtype.return_type.type == ast.NativeType.INTEGER:
-                vararg_builder.ret(CoralInteger(
+                dynamic_builder.ret(CoralInteger(
                     type_=ast.BOUND_INTEGER_TYPE,
                     lltype=LL_INT,
-                    value=vararg_builder.call(fn=llfunc, args=vararg_forward),
+                    value=dynamic_builder.call(fn=llfunc, args=dynamic_wrapper_forward),
                     boxed=False,
-                    scope=vararg_scope
+                    scope=dynamic_scope
                 ).box().value)
             elif boundtype.return_type.type == ast.NativeType.BOOLEAN:
-                vararg_builder.ret(CoralInteger(
+                dynamic_builder.ret(CoralInteger(
                     type_=ast.BOUND_BOOLEAN_TYPE,
                     lltype=LL_BOOL,
-                    value=vararg_builder.call(fn=llfunc, args=vararg_forward),
+                    value=dynamic_builder.call(fn=llfunc, args=dynamic_wrapper_forward),
                     boxed=False,
-                    scope=vararg_scope
+                    scope=dynamic_scope
                 ).box().value)
             else:
                 raise TypeError(f"the function {boundtype} must have its return boxed")
         else:
-            vararg_builder.ret(vararg_builder.call(fn=llfunc, args=vararg_forward))
-        vararg_scope.handle_gc_finalization()
+            dynamic_builder.ret(dynamic_builder.call(fn=llfunc, args=dynamic_wrapper_forward))
+        dynamic_scope.handle_gc_finalization()
 
         # create a callable function from the definition above
 
@@ -1787,10 +1842,7 @@ class CoralCompiler:
             args=(
                 LL_INT(len(node.scope.globals)),
                 LL_INT16(len(node.params)),
-                # we pass the vararg wrapper as the dynamic function
-                scope.builder.bitcast(llfunc_vararg, LL_CHAR.as_pointer()),
-                # we save this for later unboxing
-                scope.builder.bitcast(llfunc, LL_CHAR.as_pointer()),
+                llfunc_dynamic
             ),
             name=myname if myname is not None else ''
         )
@@ -1810,13 +1862,11 @@ class CoralCompiler:
                 )
             )
         return scope.collect_object(CoralFunction(
-            type_=node.boundtype,
+            type_=boundtype,
             lltype=llfunc_type,
             value=coral_llfunc,
             boxed=True,
-            scope=scope,
-            name=myname,
-            has_globals=has_globals
+            scope=scope
         ))
 
     def _may_return_from_function(self, result: _T, is_return_branch: bool) -> _T:
@@ -1858,7 +1908,8 @@ class CoralCompiler:
                 scope=scope
             )
         else:
-            return CoralInteger(type_=ast.BOUND_INTEGER_TYPE, lltype=LL_INT, value=ir.Constant(LL_INT, 0), scope=scope)
+            scope.builder.unreachable()
+            return CoralInteger(type_=ast.BOUND_INTEGER_TYPE, lltype=LL_INT, value=ir.Constant(LL_INT, 0), boxed=False, scope=scope)
 
     def _compile_declaration(
         self,

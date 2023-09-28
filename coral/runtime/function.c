@@ -25,7 +25,7 @@ CRObjectArray* CRObjectArray_new(size_t maxLength) {
 
 void CRObjectArray_release(CRObjectArray* self) {
     CR_NOT_NULL(self);
-    for (size_t i = 0; i < self->maxLength; i++) {
+    for (size_t i = 0; i < self->length; i++) {
         CRObject_decref(self->objects[i]);
     }
     CRObjectArray_destroy(self);
@@ -78,8 +78,7 @@ CRObject* CRObjectArray_get(CRObjectArray* self, size_t index) {
 CRObject* CRFunction_new(
     size_t globalsSize,
     unsigned short arity,
-    CRObject* (*fp) (CRObject**, CRObject**),
-    void* llfp
+    CRObject* (*fp) (CRObject**, CRObject**)
 ) {
     if (fp == NULL) {
         CR_ABORT("FATAL: CRFunction_new: received NULL function pointer\n");
@@ -94,7 +93,6 @@ CRObject* CRFunction_new(
     func->globals = CRObjectArray_new(globalsSize);
     func->arity = arity;
     func->fp = fp;
-    func->llfp = llfp;
     obj->_type = CR_FUNCTION;
     obj->value = func;
     return obj;
@@ -126,12 +124,12 @@ void CRFunction_setGlobal(CRObject* self, size_t index, CRObject* global) {
 CRObject* CRFunction_call(CRObject* self, size_t argscount, ...) {
     CRType selftype = CRObject_getType(self);
     if (selftype != CR_FUNCTION) {
-        CR_ABORT("FATAL: %s is not a callable\n", CRObject_getTypeName(self));
+        CR_ABORT("FATAL: CRFunction_call: %s is not a callable\n", CRObject_getTypeName(self));
         return NULL;
     }
     CRFunction* func = (CRFunction*)self->value;
     if (argscount != func->arity) {
-        CR_ABORT("FATAL: function expects %d arguments, but got %zu\n", func->arity, argscount);
+        CR_ABORT("FATAL: CRFunction_call: function expects %d arguments, but got %zu\n", func->arity, argscount);
         return NULL;
     }
     CRObject* result = NULL;
@@ -149,7 +147,7 @@ CRObject* CRFunction_call(CRObject* self, size_t argscount, ...) {
         result = func->fp(func->globals->objects, NULL);
     }
     if (result == NULL) {
-        CR_ABORT("FATAL: function returned NULL\n");
+        CR_ABORT("FATAL: CRFunction_call: function returned NULL\n");
         return NULL;
     }
     return result;
