@@ -33,6 +33,9 @@ void CRObject_decref(CRObject* self) {
             case CR_TUPLE:
                 CRTuple_destroy(self->value);
                 break;
+            case CR_FUNCTION:
+                CRFunction_destroy(self->value);
+                break;
             default:
                 CR_ABORT("FATAL: CRObject_decref: unknown CRObject type!");
                 return;
@@ -81,6 +84,8 @@ CRObject* CRObject_getTypeRepr(CRObject* self) {
         return CRString_repr(self->value);
     } else if (type == CR_TUPLE) {
         return CRTuple_repr(self->value);
+    } else if (type == CR_FUNCTION) {
+        return CRString_new("<#closure>", false);
     } else {
         return CRString_new("unknown", false);
     }

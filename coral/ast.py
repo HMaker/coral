@@ -348,8 +348,8 @@ class ScopeVar:
 
     def __init__(self, type_: IBoundType, name: str, index: int) -> None:
         self.type = type_
-        self.name = name
-        self.index = index
+        self.name: t.Final = name
+        self.index: t.Final = index
         self.changed: bool = False
 
     def may_change(self, newtype: IBoundType) -> None:
@@ -363,18 +363,15 @@ class ScopeVar:
     def __hash__(self) -> int:
         return hash(self.name)
 
-class ScopeCapture:
-    """Functions may capture names from the parent scope, this is a capture record."""
-    __slots__ = ('var', 'parent')
+class GlobalVar:
+    __slots__ = ('var', 'index')
 
-    def __init__(self, var: ScopeVar, parent: int) -> None:
-        self.var = var
-        """The captured name"""
-        self.parent = parent
-        """The parent scope position in the hierarchy from the child to the parent"""
+    def __init__(self, var: ScopeVar, index: int) -> None:
+        self.var: t.Final = var
+        self.index: t.Final = index
 
     def __eq__(self, o: object) -> bool:
-        return isinstance(o, ScopeCapture) and self.parent == o.parent and self.var == o.var
+        return isinstance(o, GlobalVar) and self.var == o.var
 
     def __hash__(self) -> int:
         return hash(self.var)
@@ -384,47 +381,33 @@ class TypeScope:
     def __init__(self, parent: t.Optional['TypeScope']) -> None:
         self.parent = parent
         self.locals: t.Dict[str, ScopeVar] = {}
-        self.nonlocals: t.Dict[str, ScopeCapture] = {}
-    
+        """ALL variables declared inside this scope, does not include any var from any parent, neither any children scopes"""
+        self.globals: t.Dict[str, GlobalVar] = {}
+        """ALL variables inherited from the immediate parent scope"""
+
     def declare(self, name: str, type_: IBoundType) -> ScopeVar:
         """Declares a new var with the given name.
         
         Raises SyntaxError if it's already declare.
         """
         if name in self.locals:
-            raise SyntaxError(f"Identifier '{name}' has already been declared")
+            raise SyntaxError(f"Identifier '{name}' has already been defined")
         var = ScopeVar(type_, name, len(self.locals))
         self.locals[name] = var
         return var
 
-    def ref(self, name: str) -> ScopeVar:
-        """Marks a reference to the given name and returns its var.
-        
-        If this name is not defined in the actual scope, it will be looked up in the parent scope
-        and the name will the stored in the "nonlocals" dict.
-        """
-        if name in self.locals:
-            return self.locals[name]
-        if name in self.nonlocals:
-            return self.nonlocals[name].var
-        var, pos = self.reflookup(name)
-        self.nonlocals[var.name] = ScopeCapture(var, pos)
-        return var
-    
-    def reflookup(self, name: str, pos: int=0) -> t.Tuple[ScopeVar, int]:
-        if name in self.locals:
-            return self.locals[name], pos
+    def get(self, name: str) -> ScopeVar:
+        localvar = self.locals.get(name, None)
+        if localvar is not None:
+            return localvar
+        globalvar = self.globals.get(name, None)
+        if globalvar is not None:
+            return globalvar.var
         if self.parent is not None:
-            return self.parent.reflookup(name, pos + 1)
-        raise ValueError(f'{name} is not defined')
-    
-    def get(self, name: str) -> t.Optional[ScopeVar]:
-        """Retrieve the var for the given name."""
-        if name in self.locals:
-            return self.locals[name]
-        if self.parent is not None:
-            return self.parent.get(name)
-        return None
+            var = self.parent.get(name)
+            self.globals[name] = GlobalVar(var, len(self.globals))
+            return var
+        raise ValueError(f"Identifier '{name}' is not defined")
 
 
 class Expression:
@@ -433,7 +416,7 @@ class Expression:
     def __init__(self, type_: IBoundType, scope: TypeScope, parent: t.Optional['Expression']=None) -> None:
         self.boundtype: IBoundType = type_
         self.parent = parent
-        self._scope: t.Final = scope
+        self.scope: t.Final = scope
 
     def typecheck(self, supertype: IBoundType) -> IBoundType:
         """Performs a type checking round.
@@ -449,8 +432,7 @@ class Expression:
     
     def handle_partial_typecheck(self, type_: IBoundType) -> None:
         """Called from the children AST nodes to inform of partial results from a typecheck call to them"""
-        if self.parent is not None:
-            return self.parent.handle_partial_typecheck(type_)
+        pass
 
 
 class LiteralBooleanValue(Expression):
@@ -784,6 +766,10 @@ class ConditionalExpression(Expression):
         alternate = self.alternate.typecheck(supertype)
         self.boundtype = then.lower(alternate)
         return self.boundtype
+    
+    def handle_partial_typecheck(self, type_: IBoundType) -> None:
+        if self.parent is not None:
+            return self.parent.handle_partial_typecheck(type_)
 
 
 class CallExpression(Expression):
@@ -799,13 +785,13 @@ class CallExpression(Expression):
         args: t.List[Expression]
     ) -> None:
         super().__init__(type_, scope, parent)
-        self._callee = callee
-        self._args = args
+        self.callee: t.Final = callee
+        self.args: t.Final = args
 
     def typecheck(self, supertype: IBoundType) -> IBoundType:
         # we update the called function signature using the call args and the expected return
-        signature = self._callee.typecheck(BoundFunctionType(
-            tuple(arg.typecheck(BOUND_ANY_TYPE) for arg in self._args),
+        signature = self.callee.typecheck(BoundFunctionType(
+            tuple(arg.typecheck(BOUND_ANY_TYPE) for arg in self.args),
             supertype
         ))
         if signature.type == NativeType.FUNCTION:
@@ -829,26 +815,26 @@ class FunctionExpression(Expression):
         binding: t.Optional[ReferenceExpression] = None,
     ) -> None:
         super().__init__(type_, scope, parent)
-        self._binding: t.Final = binding
-        self._params: t.Final = params
-        self._body: t.Final = body
+        self.binding: t.Final = binding
+        self.params: t.Final = params
+        self.body: t.Final = body
 
     def typecheck(self, supertype: IBoundType) -> IBoundType:
         lowered_signature = self.boundtype.lower(supertype)
         if lowered_signature.type == NativeType.FUNCTION:
             lowered_signature = t.cast(BoundFunctionType, lowered_signature)
             param_types = lowered_signature.params
-            for i, param in enumerate(self._params):
+            for i, param in enumerate(self.params):
                 param.typecheck(param_types[i])
-            return_type = self._body.typecheck(lowered_signature.return_type)
+            return_type = self.body.typecheck(lowered_signature.return_type)
             if return_type.lowers(lowered_signature.return_type):
                 self.boundtype = BoundFunctionType(
-                    tuple(param.boundtype for param in self._params),
+                    tuple(param.boundtype for param in self.params),
                     return_type
                 )
             else:
                 self.boundtype = BoundFunctionType(
-                    tuple(param.boundtype for param in self._params),
+                    tuple(param.boundtype for param in self.params),
                     lowered_signature.return_type
                 )
             return self.boundtype
@@ -856,12 +842,12 @@ class FunctionExpression(Expression):
 
     def handle_partial_typecheck(self, type_: IBoundType) -> None:
         boundtype = t.cast(BoundFunctionType, self.boundtype)
-        if self._binding is not None and type_.lowers(boundtype.return_type):
-            self._binding.typecheck(BoundFunctionType(boundtype.params, type_))
+        if self.binding is not None and type_.lowers(boundtype.return_type):
+            self.binding.typecheck(BoundFunctionType(boundtype.params, type_))
 
     def __str__(self) -> str:
-        if self._binding is not None:
-            return f'{self._binding.name}()'
+        if self.binding is not None:
+            return f'{self.binding.name}()'
         return f'<#closure>()'
 
 
@@ -893,6 +879,10 @@ class LetExpression(Expression):
         next_ = self.next.typecheck(supertype)
         self.boundtype = next_
         return next_
+    
+    def handle_partial_typecheck(self, type_: IBoundType) -> None:
+        if self.parent is not None:
+            return self.parent.handle_partial_typecheck(type_)
 
 
 class Program:
@@ -929,7 +919,7 @@ def build_typed_ast(
         case 'Var':
             term = t.cast(parser.IdentifierSyntax, term)
             try:
-                var = scope.ref(term['text'])
+                var = scope.get(term['text'])
             except ValueError as e:
                 raise ValueError(f"{e.args[0]} at {term['location']}") from e
             return ReferenceExpression(

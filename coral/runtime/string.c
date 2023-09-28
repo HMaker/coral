@@ -30,7 +30,7 @@ CRObject* CRString_newCopy(const char* value, size_t length) {
         CR_ABORT("FATAL: CRString_newCopy: failed to allocate a new CRString!\n");
         return NULL;
     }
-    memcpy(copy, value, length);
+    memcpy(copy, value, length + 1);
     container->value = copy;
     container->length = length;
     container->owner = true;
@@ -81,7 +81,7 @@ CRObject* CRString_concat(CRObject* self, CRObject* other) {
             return NULL;
         }
         memcpy(result, left->value, left->length);
-        memcpy(result + left->length, rightstr, rightlen);
+        memcpy(result + left->length, rightstr, rightlen + 1);
         return CRString_new(result, true);
     } else {
         const CRString* right = other->value;
@@ -99,7 +99,7 @@ CRObject* CRString_concat(CRObject* self, CRObject* other) {
             return NULL;
         }
         memcpy(result, leftstr, leftlen);
-        memcpy(result + leftlen, right->value, right->length);
+        memcpy(result + leftlen, right->value, right->length + 1);
         return CRString_new(result, true);
     }
 }
@@ -122,6 +122,6 @@ CRObject* CRString_repr(CRString* self) {
     }
     memcpy(repr, "\"", 1);
     memcpy(repr + 1, self->value, self->length);
-    memcpy(repr + (1 + self->length), "\"", 1);
+    memcpy(repr + (1 + self->length), "\"", 2); // copy nullbyte
     return CRString_new(repr, true);
 }

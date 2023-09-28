@@ -28,11 +28,13 @@ typedef enum
     CR_FUNCTION
 } CRType;
 
-typedef struct CRObject {
+
+typedef struct {
   CRType _type;
   unsigned long _refCount;
   void* value;
 } CRObject;
+
 
 typedef struct {
     const char* value;
@@ -40,15 +42,25 @@ typedef struct {
     bool owner;
 } CRString;
 
+
 typedef struct {
     CRObject* first;
     CRObject* second;
 } CRTuple;
 
+
 typedef struct {
-    uint16_t arity;
-    CRObject** globals;
-    CRObject* (*func) (CRObject*, ...);
+    CRObject** objects;
+    size_t length;
+    size_t maxLength;
+} CRObjectArray;
+
+
+typedef struct {
+    unsigned short arity;
+    CRObjectArray* globals;
+    CRObject* (*fp) (CRObject**, CRObject**);
+    void* llfp;
 } CRFunction;
 
 
@@ -191,7 +203,21 @@ CRObject* CRTuple_repr(CRTuple* self);
  * FUNCTION
 **********************************************************************************************/
 
-CRObject* CRFunction_call(CRObject* self, ...);
+CRObjectArray* CRObjectArray_new(size_t maxLength);
+void CRObjectArray_release(CRObjectArray* self);
+void CRObjectArray_destroy(CRObjectArray* self);
+void CRObjectArray_push(CRObjectArray* self, CRObject* object);
+void CRObjectArray_insert(CRObjectArray* self, size_t index, CRObject* object);
+CRObject* CRObjectArray_get(CRObjectArray* self, size_t index);
 
+CRObject* CRFunction_new(
+    size_t globalsSize,
+    unsigned short arity,
+    CRObject* (*fp) (CRObject**, CRObject**),
+    void* llfp
+);
+void CRFunction_destroy(CRFunction* self);
+void CRFunction_setGlobal(CRObject* self, size_t index, CRObject* global);
+CRObject* CRFunction_call(CRObject* self, size_t argscount, ...);
 
 #endif
