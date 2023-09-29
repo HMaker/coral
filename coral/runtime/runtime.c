@@ -128,6 +128,42 @@ CRObject* CRObject_add(CRObject* self, CRObject* other) {
 }
 
 
+CRObject* CRObject_sub(CRObject* self, CRObject* other) {
+    return CRObject_newInt(CRObject_asInt(self) - CRObject_asInt(other));
+}
+CRObject* CRObject_mul(CRObject* self, CRObject* other) {
+    return CRObject_newInt(CRObject_asInt(self) * CRObject_asInt(other));
+}
+CRObject* CRObject_div(CRObject* self, CRObject* other) {
+    return CRObject_newInt(CRObject_asInt(self) / CRObject_asInt(other));
+}
+CRObject* CRObject_mod(CRObject* self, CRObject* other) {
+    return CRObject_newInt(CRObject_asInt(self) % CRObject_asInt(other));
+}
+
+CRObject* CRObject_lessThan(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asInt(self) < CRObject_asInt(other));
+}
+CRObject* CRObject_lessOrEqual(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asInt(self) <= CRObject_asInt(other));
+}
+CRObject* CRObject_greaterThan(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asInt(self) > CRObject_asInt(other));
+}
+CRObject* CRObject_greaterOrEqual(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asInt(self) >= CRObject_asInt(other));
+}
+CRObject* CRObject_and(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asBool(self) && CRObject_asBool(other));
+}
+CRObject* CRObject_or(CRObject* self, CRObject* other) {
+    return CRObject_newBool(CRObject_asBool(self) || CRObject_asBool(other));
+}
+CRObject* CRObject_notEquals(CRObject* self, CRObject* other) {
+    return CRObject_newBool(!CRObject_asBool(CRObject_equals(self, other)));
+}
+
+
 CRObject* CRObject_equals(CRObject* self, CRObject* other) {
     CRType selftype = CRObject_getType(self);
     CRType othertype = CRObject_getType(other);
