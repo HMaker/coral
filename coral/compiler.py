@@ -1949,7 +1949,7 @@ class CoralCompiler:
         is_return_branch: bool=False
     ) -> CoralObject:
         cond = self._compile_node(node.cond, scope, is_return_branch=False)
-        with scope.builder.if_else(cond.value) as (then_branch, else_branch):
+        with scope.builder.if_else(cond.unbox().value) as (then_branch, else_branch):
             with then_branch:
                 then_block = scope.builder._block
                 then = self._compile_node(node.then, scope, is_return_branch=is_return_branch)
