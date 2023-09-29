@@ -6,19 +6,14 @@ IR_COMPILER_TESTS = (
     (
         "debug",
         """
-let fibrec = fn (n, k1, k2) => {
-    if (n == 0) {
-        k1
-    } else {
-        if (n == 1) {
-            k2
-        } else {
-            fibrec(n - 1, k2, k1 + k2)
-        }
-    }
+let fib = fn (n) => {
+  if (n < 2) {
+    fn () => n
+  } else {
+    fn () => fib(n - 1)() + fib(n - 2)()
+  }
 };
-fibrec(10, 0, 1)
-
+print(fib(100)())
         """
     ),
     # (

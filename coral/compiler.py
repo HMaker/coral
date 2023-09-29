@@ -476,7 +476,12 @@ class CoralObject:
                     scope=scope
                 )
             case ast.NativeType.FUNCTION:
-                boundtype = t.cast(CoralFunctionType, boundtype)
+                # we also can't do static call dispatch for functions loaded from raw memory address
+                if not isinstance(boundtype, CoralFunctionType):
+                    boundtype = CoralFunctionType(
+                        boundtype.params,
+                        return_type=boundtype.return_type
+                    )
                 return CoralFunction(
                     type_=boundtype,
                     lltype=value.type,
@@ -1165,8 +1170,8 @@ class CoralFunctionType(ast.BoundFunctionType):
     def __init__(
         self,
         params: t.Sequence[ast.IBoundType],
-        param_names: t.Sequence[str],
         return_type: ast.IBoundType,
+        param_names: t.Optional[t.Sequence[str]] = None,
         llfunc: t.Optional[ir.Function] = None,
         has_globals: bool = False,
         name: t.Optional[str] = None
@@ -1811,16 +1816,15 @@ class CoralCompiler:
         # forward static types information from parent globals
         child_globals_index = {
             globalvar.var.name: ast.ScopeVar(
-                type_=globalvar.var.type,
+                type_=(
+                    scope.get_var(globalvar.var.name).boundtype
+                    if globalvar.var.name != myname else boundtype
+                ),
                 name=globalvar.var.name,
                 index=globalvar.index
             )
             for globalvar in node.scope.globals.values()
         }
-        for globalvar in scope.globals_index.values():
-            child_globals_index[globalvar.name].type = globalvar.type
-        if myname is not None and myname in child_globals_index:
-            child_globals_index[myname].type = boundtype
         # compile the function body
         child_scope = CoralFunctionCompilation(
             globals_ptr=child_globals_ptr,
@@ -1939,8 +1943,6 @@ class CoralCompiler:
                 args=(
                     coral_llfunc,
                     LL_INT(varindex.index),
-                    # handle recursive functions reference
-                    # functions have name only when bound to a variable
                     scope.get_var(varindex.var.name).box().value
                     if myname is None or varindex.var.name != myname
                     else coral_llfunc
