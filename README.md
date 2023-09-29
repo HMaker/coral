@@ -214,3 +214,19 @@ Calls to `CRObjectArray_push()` pushes objects into the garbage collection list.
 
 `coral` also attempts to preserve the tail calls by delegating the arguments cleanup to the called function, this way it can release the `__gc__` list without waiting for the call to return. It also forwards as is the returned value from the called function. The downside of this approach is that calls which need boxed arguments, but are not at the tail, will have a little overhead to create new references.
 
+## Installation
+It requires `Python 3.9+` and `LLVM 10-14`. After installing those dependencies you can clone this repo and setup the Python environment:
+```bash
+git clone https://github.com/HMaker/coral.git
+cd coral
+python -m venv .venv --prompt=coral
+. .venv/bin/activate
+pip install -r requirements-dev.txt
+python coral.py --help
+```
+
+You can also build a docker image and use it through a container:
+```bash
+docker build -t coral .
+docker run --entrypoint python coral coral.py --help
+```
