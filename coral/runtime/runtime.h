@@ -74,11 +74,7 @@ inline CRType CRObject_getType(CRObject* self) {
         return self->_type;
     }
 }
-inline void CRObject_incref(CRObject* self) {
-    CRType type = CRObject_getType(self);
-    if (type == CR_INT || type == CR_BOOL) return;
-    self->_refCount++;
-}
+void CRObject_incref(CRObject* self);
 void CRObject_decref(CRObject* self);
 
 const char* CRObject_getTypeName(CRObject* self);
@@ -105,16 +101,16 @@ inline int64_t CRObject_asInt(CRObject* self) {
     return (int64_t)self >> TAGGED_PTR_SHIFT;
 }
 CRObject* CRObject_add(CRObject* self, CRObject* other);
-inline CRObject* CRObject_sub(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_sub(CRObject* self, CRObject* other) {
     return CRObject_newInt(CRObject_asInt(self) - CRObject_asInt(other));
 }
-inline CRObject* CRObject_mul(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_mul(CRObject* self, CRObject* other) {
     return CRObject_newInt(CRObject_asInt(self) * CRObject_asInt(other));
 }
-inline CRObject* CRObject_div(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_div(CRObject* self, CRObject* other) {
     return CRObject_newInt(CRObject_asInt(self) / CRObject_asInt(other));
 }
-inline CRObject* CRObject_mod(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_mod(CRObject* self, CRObject* other) {
     return CRObject_newInt(CRObject_asInt(self) % CRObject_asInt(other));
 }
 
@@ -137,26 +133,26 @@ inline bool CRObject_asBool(CRObject* self) {
     }
     return (int64_t)self >> TAGGED_PTR_SHIFT;
 }
-inline CRObject* CRObject_lessThan(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_lessThan(CRObject* self, CRObject* other) {
     return CRObject_newBool(CRObject_asInt(self) < CRObject_asInt(other));
 }
-inline CRObject* CRObject_lessOrEqual(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_lessOrEqual(CRObject* self, CRObject* other) {
     return CRObject_newBool(CRObject_asInt(self) <= CRObject_asInt(other));
 }
-inline CRObject* CRObject_greaterThan(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_greaterThan(CRObject* self, CRObject* other) {
     return CRObject_newBool(CRObject_asInt(self) > CRObject_asInt(other));
 }
-inline CRObject* CRObject_greaterOrEqual(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_greaterOrEqual(CRObject* self, CRObject* other) {
     return CRObject_newBool(CRObject_asInt(self) >= CRObject_asInt(other));
 }
-inline CRObject* CRObject_and(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_and(CRObject* self, CRObject* other) {
     return CRObject_newBool(CRObject_asBool(self) && CRObject_asBool(other));
 }
-inline CRObject* CRObject_or(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_or(CRObject* self, CRObject* other) {
     return CRObject_newBool(CRObject_asBool(self) || CRObject_asBool(other));
 }
 CRObject* CRObject_equals(CRObject* self, CRObject* other);
-inline CRObject* CRObject_notEquals(CRObject* self, CRObject* other) {
+static inline CRObject* CRObject_notEquals(CRObject* self, CRObject* other) {
     return CRObject_newBool(!CRObject_asBool(CRObject_equals(self, other)));
 }
 

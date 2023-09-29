@@ -13,6 +13,12 @@ CRObject* CRObject_new() {
 }
 
 
+void CRObject_incref(CRObject* self) {
+    CRType type = CRObject_getType(self);
+    if (type == CR_INT || type == CR_BOOL) return;
+    self->_refCount++;
+}
+
 void CRObject_decref(CRObject* self) {
     if (self == NULL) {
         CR_ABORT("FATAL: CRObject_decref: received NULL pointer");

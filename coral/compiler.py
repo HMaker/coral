@@ -10,7 +10,7 @@ llvm.initialize_native_target()
 llvm.initialize_native_asmprinter()
 llvm.check_jit_execution()
 with importlib.resources.as_file(
-    importlib.resources.files('coral').joinpath('runtime.so')
+    importlib.resources.files('coral').joinpath('libruntime.so')
 ) as runtimelib:
     llvm.load_library_permanently(str(runtimelib))
 
@@ -118,6 +118,7 @@ class CoralRuntime:
                 args=[crobject_struct_ptr]
             )
         )
+        crobject_incref.linkage = 'external'
         crobject_decref = ir.Function(
             name='CRObject_decref',
             module=mod,
@@ -126,6 +127,7 @@ class CoralRuntime:
                 args=[crobject_struct_ptr]
             )
         )
+        crobject_decref.linkage = 'external'
 
         crobject_binary_operator_func = ir.FunctionType(
             return_type=crobject_struct_ptr,
@@ -136,66 +138,92 @@ class CoralRuntime:
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_add.linkage = 'external'
+        crobject_add.attributes.add('readonly')
         crobject_sub = ir.Function(
             name='CRObject_sub',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_sub.linkage = 'external'
+        crobject_sub.attributes.add('readonly')
         crobject_mul = ir.Function(
             name='CRObject_mul',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_mul.linkage = 'external'
+        crobject_mul.attributes.add('readonly')
         crobject_div = ir.Function(
             name='CRObject_div',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_div.linkage = 'external'
+        crobject_div.attributes.add('readonly')
         crobject_mod = ir.Function(
             name='CRObject_mod',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_mod.linkage = 'external'
+        crobject_mod.attributes.add('readonly')
         crobject_lt = ir.Function(
             name='CRObject_lessThan',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_lt.linkage = 'external'
+        crobject_lt.attributes.add('readonly')
         crobject_lte = ir.Function(
             name='CRObject_lessOrEqual',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_lte.linkage = 'external'
+        crobject_lte.attributes.add('readonly')
         crobject_gt = ir.Function(
             name='CRObject_greaterThan',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_gt.linkage = 'external'
+        crobject_gt.attributes.add('readonly')
         crobject_gte = ir.Function(
             name='CRObject_greaterOrEqual',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_gte.linkage = 'external'
+        crobject_gte.attributes.add('readonly')
         crobject_and = ir.Function(
             name='CRObject_and',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_and.linkage = 'external'
+        crobject_and.attributes.add('readonly')
         crobject_or = ir.Function(
             name='CRObject_or',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_or.linkage = 'external'
+        crobject_or.attributes.add('readonly')
         crobject_equals = ir.Function(
             name='CRObject_equals',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_equals.linkage = 'external'
+        crobject_equals.attributes.add('readonly')
         crobject_notequals = ir.Function(
             name='CRObject_notEquals',
             module=mod,
             ftype=crobject_binary_operator_func
         )
+        crobject_notequals.linkage = 'external'
+        crobject_notequals.attributes.add('readonly')
 
         crstring_new = ir.Function(
             name='CRString_new',
@@ -205,6 +233,7 @@ class CoralRuntime:
                 args=[LL_CHAR.as_pointer(), LL_INT]
             )
         )
+        crstring_new.linkage = 'external'
 
         crobject_print = ir.Function(
             name='CRObject_print',
@@ -214,6 +243,7 @@ class CoralRuntime:
                 args=[crobject_struct_ptr]
             )
         )
+        crobject_print.linkage = 'external'
 
         crtuple_struct = mod.context.get_identified_type('struct.CRTuple')
         crtuple_struct.set_body(crobject_struct_ptr, crobject_struct_ptr)
@@ -225,6 +255,7 @@ class CoralRuntime:
                 args=[crobject_struct_ptr, crobject_struct_ptr]
             )
         )
+        crtuple_new.linkage = 'external'
         crtuple_get_first = ir.Function(
             name='CRTuple_getFirst',
             module=mod,
@@ -233,6 +264,8 @@ class CoralRuntime:
                 args=[crobject_struct_ptr]
             )
         )
+        crtuple_get_first.linkage = 'external'
+        crtuple_get_first.attributes.add('readonly')
         crtuple_get_second = ir.Function(
             name='CRTuple_getSecond',
             module=mod,
@@ -241,6 +274,8 @@ class CoralRuntime:
                 args=[crobject_struct_ptr]
             )
         )
+        crtuple_get_second.linkage = 'external'
+        crtuple_get_second.attributes.add('readonly')
 
         crobjectarray_struct = mod.context.get_identified_type('struct.CRObjectArray')
         crobjectarray_struct.set_body(
@@ -256,6 +291,7 @@ class CoralRuntime:
                 return_type=crobjectarray_struct.as_pointer()
             )
         )
+        crobjectarray_new.linkage = 'external'
         crobjectarray_push = ir.Function(
             name='CRObjectArray_push',
             module=mod,
@@ -264,6 +300,7 @@ class CoralRuntime:
                 return_type=ir.VoidType()
             )
         )
+        crobjectarray_push.linkage = 'external'
         crobjectarray_release = ir.Function(
             name='CRObjectArray_release',
             module=mod,
@@ -272,6 +309,7 @@ class CoralRuntime:
                 return_type=ir.VoidType()
             )
         )
+        crobjectarray_release.linkage = 'external'
 
         crfunction_struct = mod.context.get_identified_type('struct.CRFunction')
         crfunction_fp = ir.FunctionType( # CRObject* (*fp) (CRObject**, CRObject**)
@@ -291,6 +329,7 @@ class CoralRuntime:
                 return_type=crobject_struct_ptr
             )
         )
+        crfunction_new.linkage = 'external'
         crfunction_set_global = ir.Function(
             name='CRFunction_setGlobal',
             module=mod,
@@ -299,6 +338,7 @@ class CoralRuntime:
                 return_type=ir.VoidType()
             )
         )
+        crfunction_set_global.linkage = 'external'
         crfunction_call = ir.Function(
             name='CRFunction_call',
             module=mod,
@@ -308,6 +348,7 @@ class CoralRuntime:
                 var_arg=True
             )
         )
+        crfunction_call.linkage = 'external'
 
         return CoralRuntime(
             crobject_struct=crobject_struct,
@@ -1614,7 +1655,7 @@ class CoralCompiler:
         self._engine.add_module(self._llmodule)
         self._engine.finalize_object()
         self._engine.run_static_constructors()
-        return c.CFUNCTYPE(restype=None)(self._engine.get_function_address('__main__'))
+        return c.CFUNCTYPE(restype=c.c_long)(self._engine.get_function_address('main'))
 
     def compile_ir(self, verify: bool=False) -> ir.Module:
         """Compiles the typed AST down to LLVM IR.
@@ -1626,9 +1667,9 @@ class CoralCompiler:
         self._module.triple = llvm.Target.from_default_triple().triple
         runtime = CoralRuntime.import_into(self._module)
         main = ir.Function(
-            name='__main__',
+            name='main',
             module=self._module,
-            ftype=ir.FunctionType(return_type=ir.VoidType(), args=[])
+            ftype=ir.FunctionType(return_type=LL_INT, args=[])
         )
         entry_block = main.append_basic_block('entry')
         main_builder = ir.IRBuilder(entry_block)
@@ -1638,9 +1679,9 @@ class CoralCompiler:
             boundtype=CoralFunctionType(
                 params=(),
                 param_names=(),
-                return_type=ast.BOUND_UNDEFINED_TYPE,
+                return_type=ast.BOUND_INTEGER_TYPE,
                 llfunc=main,
-                name='__main__'
+                name='main'
             ),
             returns_boxed=False,
             scope_path='',
@@ -1651,7 +1692,7 @@ class CoralCompiler:
         self._compile_node(self._program.body, main_scope, is_return_branch=False)
         main_scope.handle_gc_cleanup()
         main_scope.handle_gc_finalization()
-        main_builder.ret_void()
+        main_builder.ret(LL_INT(0))
         if verify:
             llmod = llvm.parse_assembly(str(self._module))
             llmod.verify()

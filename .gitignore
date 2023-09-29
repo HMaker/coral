@@ -1,5 +1,7 @@
 __pycache__
 *.so
+*.a
+*.o
 /.mypy_cache
 /.venv
 /.vscode
