@@ -1445,7 +1445,7 @@ class CoralFunctionCompilation:
         *,
         globals_ptr: ir.NamedValue, # CRObject**
         globals_index: t.Dict[str, ast.ScopeVar],
-        boundtype: CoralFunctionType,
+        function_type: CoralFunctionType,
         returns_boxed: bool,
         scope_path: str,
         functions_count: int,
@@ -1454,7 +1454,7 @@ class CoralFunctionCompilation:
     ) -> None:
         self.globals_ptr: t.Final = globals_ptr
         self.globals_index: t.Final = globals_index
-        self.boundtype: t.Final = boundtype
+        self.function_type: t.Final = function_type
         self.returns_boxed: t.Final = returns_boxed
         self.vars: t.Final[t.Dict[str, CoralObject]] = {}
         self.scope_path: t.Final = scope_path
@@ -1472,7 +1472,7 @@ class CoralFunctionCompilation:
 
     @property
     def return_type(self) -> ir.Type:
-        return self.boundtype.llfunc.ftype.return_type
+        return self.function_type.llfunc.ftype.return_type
 
     def add_local_var(self, name: str, value: CoralObject) -> None:
         if name in self.vars:
@@ -1487,11 +1487,11 @@ class CoralFunctionCompilation:
 
     def load_params(self) -> None:
         """Loads the arguments into the local vars list. It must be done before loading the globals."""
-        if self.boundtype.has_globals:
-            llfunc_real_params = self.boundtype.llfunc.args[1:]
+        if self.function_type.has_globals:
+            llfunc_real_params = self.function_type.llfunc.args[1:]
         else:
-            llfunc_real_params = self.boundtype.llfunc.args
-        for i, param in enumerate(self.boundtype.params):
+            llfunc_real_params = self.function_type.llfunc.args
+        for i, param in enumerate(self.function_type.params):
             paramvar: CoralObject
             match param.type:
                 case ast.NativeType.INTEGER:
@@ -1553,7 +1553,7 @@ class CoralFunctionCompilation:
                 self.collect_object(paramvar)
             if param.is_static:
                 paramvar = paramvar.unbox()
-            self.add_local_var(self.boundtype.param_names[i], paramvar)
+            self.add_local_var(self.function_type.param_names[i], paramvar)
 
     def load_globals(self) -> None:
         """Loads the inherited globals into the local vars list"""
@@ -1594,12 +1594,12 @@ class CoralFunctionCompilation:
             self.handle_gc_cleanup()
             self.builder.ret(result.value)
             return result
-        elif result.lltype == self.boundtype.llfunc.ftype.return_type:
+        elif result.lltype == self.function_type.llfunc.ftype.return_type:
             self.handle_gc_cleanup()
             self.builder.ret(result.value)
             return result
         else:
-            raise TypeError(f"expected return type '{self.boundtype.llfunc.ftype.return_type}', but got '{result.lltype}'")
+            raise TypeError(f"expected return type '{self.function_type.llfunc.ftype.return_type}', but got '{result.lltype}'")
 
     def handle_gc_cleanup(self) -> None:
         """Releases the GC list, this must be called only at the exit of the function"""
@@ -1676,7 +1676,7 @@ class CoralCompiler:
         main_scope = CoralFunctionCompilation(
             globals_ptr=ir.Constant(runtime.crobject_struct.as_pointer().as_pointer(), 0),
             globals_index={},
-            boundtype=CoralFunctionType(
+            function_type=CoralFunctionType(
                 params=(),
                 param_names=(),
                 return_type=ast.BOUND_INTEGER_TYPE,
@@ -1797,20 +1797,23 @@ class CoralCompiler:
         scope: CoralFunctionCompilation,
         is_return_branch: bool=False
     ) -> CoralObject:
-        callobj = self._compile_node(node.callee, scope, is_return_branch=False)
+        callee = self._compile_node(node.callee, scope, is_return_branch=False)
         callargs = [self._compile_node(arg, scope, is_return_branch=False) for arg in node.args]
         if is_return_branch:
-            if callobj.boundtype.type == ast.NativeType.FUNCTION:
-                callobj = t.cast(CoralFunction, callobj)
-                if callobj.function_type.llfunc is None:
+            if callee.boundtype.type == ast.NativeType.FUNCTION:
+                callee = t.cast(CoralFunction, callee)
+                if callee.function_type.llfunc is None:
                     if not scope.returns_boxed:
-                        raise TypeError(f"function '{scope.boundtype.name}' must return '{scope.boundtype.ll_return_type}', but got CRObject*")
-                elif callobj.function_type.ll_return_type != scope.boundtype.ll_return_type:
-                    raise TypeError(f"function '{scope.boundtype.name}' must return '{scope.boundtype.ll_return_type}', but got '{callobj.function_type.ll_return_type}'")
-            obj = CoralFunction.call(scope, callobj, callargs, tail=True)
-            scope.builder.ret(obj.value)
-            return obj
-        return CoralFunction.call(scope, callobj, callargs)
+                        raise TypeError(f"function '{scope.function_type.name}' must return '{scope.function_type.ll_return_type}', but got CRObject*")
+                elif callee.function_type.ll_return_type != scope.function_type.ll_return_type:
+                    raise TypeError(f"function '{scope.function_type.name}' must return '{scope.function_type.ll_return_type}', but got '{callee.function_type.ll_return_type}'")
+                # clang supports tail calls only if the caller and callee signatures match
+                if callee.function_type.llfunc.ftype == scope.function_type.llfunc.ftype:
+                    obj = CoralFunction.call(scope, callee, callargs, tail=True)
+                    scope.builder.ret(obj.value)
+                    return obj
+            return scope.handle_return_with_value(CoralFunction.call(scope, callee, callargs))
+        return CoralFunction.call(scope, callee, callargs)
 
     def _compile_function(self, node: ast.FunctionExpression, scope: CoralFunctionCompilation) -> CoralFunction:
         """Compiles the function definition and returns a function object ready to be called."""
@@ -1876,7 +1879,7 @@ class CoralCompiler:
         child_scope = CoralFunctionCompilation(
             globals_ptr=child_globals_ptr,
             globals_index=child_globals_index,
-            boundtype=boundtype,
+            function_type=boundtype,
             returns_boxed=llfunc_type.return_type == crobject_struct_ptr,
             scope_path=llname,
             functions_count=0,
@@ -1912,7 +1915,7 @@ class CoralCompiler:
         dynamic_scope = CoralFunctionCompilation(
             globals_ptr=llfunc_dynamic.args[0],
             globals_index={},
-            boundtype=CoralFunctionType(
+            function_type=CoralFunctionType(
                 params=(),
                 param_names=(),
                 return_type=ast.BOUND_UNDEFINED_TYPE,
