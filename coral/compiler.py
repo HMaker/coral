@@ -1972,7 +1972,13 @@ class CoralCompiler:
             )
         else:
             scope.builder.unreachable()
-            return CoralInteger(type_=ast.BOUND_INTEGER_TYPE, lltype=LL_INT, value=ir.Constant(LL_INT, 0), boxed=False, scope=scope)
+            return CoralObject(
+                type_=ast.BOUND_UNDEFINED_TYPE,
+                lltype=scope.runtime.crobject_struct.as_pointer(),
+                value=scope.runtime.crobject_struct.as_pointer()(0),
+                boxed=True,
+                scope=scope
+            )
 
     def _compile_declaration(
         self,
