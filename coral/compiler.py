@@ -8,6 +8,7 @@ from coral import ast
 llvm.initialize()
 llvm.initialize_native_target()
 llvm.initialize_native_asmprinter()
+llvm.check_jit_execution()
 with importlib.resources.as_file(
     importlib.resources.files('coral').joinpath('runtime.so')
 ) as runtimelib:
@@ -502,6 +503,7 @@ class CoralObject:
     def merge_branch(
         cls,
         *,
+        boundtype: ast.IBoundType,
         then_value: 'CoralObject',
         then_block: ir.Block,
         else_value: 'CoralObject',
@@ -519,7 +521,7 @@ class CoralObject:
         result.add_incoming(then_value.value, then_block)
         result.add_incoming(else_value.value, else_block)
         return cls(
-            type_=then_value.boundtype,
+            type_=boundtype,
             lltype=then_value.lltype,
             value=result,
             boxed=then_value.boxed,
@@ -1003,8 +1005,7 @@ class CoralTuple(CoralObject):
 
     def instance_get_first(self) -> CoralObject:
         if not self.boxed:
-            first = t.cast(CoralObject, self._first)
-            return first
+            return self.ensure_first
         return CoralObject.wrap_boxed_value(
             boundtype=self.boundtype.generics[0],
             value=self.scope.runtime.get_tuple_first(self.value, self.scope.builder),
@@ -1055,6 +1056,7 @@ class CoralTuple(CoralObject):
     def merge_branch(
         cls,
         *,
+        boundtype: ast.IBoundType,
         then_value: 'CoralObject',
         then_block: ir.Block,
         else_value: 'CoralObject',
@@ -1062,6 +1064,7 @@ class CoralTuple(CoralObject):
         scope: 'CoralFunctionCompilation'
     ) -> 'CoralObject':
         if (
+            boundtype.type != ast.NativeType.TUPLE or
             then_value.boundtype.type != ast.NativeType.TUPLE or
             else_value.boundtype.type != ast.NativeType.TUPLE
         ):
@@ -1088,8 +1091,8 @@ class CoralTuple(CoralObject):
                 scope=scope
             )
             return cls(
-                type_=then_value.boundtype,
-                lltype=then_value.lltype,
+                type_=boundtype,
+                lltype=ir.VoidType(),
                 first=first,
                 second=second,
                 boxed=False,
@@ -1098,6 +1101,7 @@ class CoralTuple(CoralObject):
             ) 
         else:
             return super().merge_branch(
+                boundtype=boundtype,
                 then_value=then_value,
                 then_block=then_block,
                 else_value=else_value,
@@ -1619,6 +1623,7 @@ class CoralCompiler:
         """
         self._strings = {}
         self._module = ir.Module(self._program.filename, context=ir.Context())
+        self._module.triple = llvm.Target.from_default_triple().triple
         runtime = CoralRuntime.import_into(self._module)
         main = ir.Function(
             name='__main__',
@@ -1975,10 +1980,9 @@ class CoralCompiler:
                 otherwise = self._compile_node(node.alternate, scope, is_return_branch=is_return_branch)
                 if not node.boundtype.is_static:
                     otherwise = otherwise.box()
-        # we dont have any value if we are part of a return branch, the value is returned by a
-        # explicit "ret" from the bottom of the AST.
         if not is_return_branch:
             return then.merge_branch(
+                boundtype=node.boundtype,
                 then_value=then,
                 then_block=then_block,
                 else_value=otherwise,
@@ -1986,6 +1990,8 @@ class CoralCompiler:
                 scope=scope
             )
         else:
+            # we dont have any value if we are part of a return branch, the value is returned by a
+            # explicit "ret" from the bottom of the AST.
             scope.builder.unreachable()
             return CoralObject(
                 type_=ast.BOUND_UNDEFINED_TYPE,
