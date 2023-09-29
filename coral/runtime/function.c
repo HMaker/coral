@@ -11,7 +11,7 @@ CRObjectArray* CRObjectArray_new(size_t maxLength) {
             return NULL;
         }
     }
-    CRObjectArray* array = (CRObjectArray*) malloc(sizeof(CRObjectArray));
+    CRObjectArray* array = (CRObjectArray*) calloc(1, sizeof(CRObjectArray));
     if (array == NULL) {
         CR_ABORT("FATAL: CRObjectArray_new: failed to allocate new array\n");
         return NULL;

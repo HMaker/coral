@@ -615,7 +615,7 @@ class CoralInteger(CoralObject):
         pass
 
     @classmethod
-    def add(cls, self: CoralObject, other: CoralObject) -> 'CoralInteger':
+    def add(cls, self: CoralObject, other: CoralObject) -> t.Union['CoralInteger', 'CoralString']:
         if self.boundtype.type == ast.NativeType.INTEGER and other.boundtype.type == ast.NativeType.INTEGER:
             return CoralInteger(
                 type_=ast.BOUND_INTEGER_TYPE,
@@ -625,7 +625,7 @@ class CoralInteger(CoralObject):
                 scope=self.scope
             )
         if self.boundtype.type == ast.NativeType.STRING or other.boundtype.type == ast.NativeType.STRING:
-            return CoralInteger(
+            return self.scope.collect_object(CoralString(
                 type_=ast.BOUND_STRING_TYPE,
                 lltype=self.scope.runtime.crobject_add.ftype.return_type,
                 value=self.scope.builder.call(
@@ -634,8 +634,9 @@ class CoralInteger(CoralObject):
                 ),
                 boxed=True,
                 scope=self.scope
-            )
-        return CoralInteger(
+            ))
+        # it may return a string, that's why we collect here
+        return self.scope.collect_object(CoralObject(
             type_=ast.BINOP_ADD_TYPES,
             lltype=self.scope.runtime.crobject_add.ftype.return_type,
             value=self.scope.builder.call(
@@ -644,7 +645,7 @@ class CoralInteger(CoralObject):
             ),
             boxed=True,
             scope=self.scope
-        )
+        ))
 
     @classmethod
     def sub(cls, self: CoralObject, other: CoralObject) -> 'CoralInteger':
