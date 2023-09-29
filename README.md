@@ -31,7 +31,9 @@ Tuples support the `first` and `second` index operators. The first returns the f
 ```
 first((1, 2))  == 1
 second((1, 2)) == 2
-``` 
+```
+
+You also can write to the process' stdout with `print()`
 
 ### Example
 Example of a function which computes the nth term of the Fibonacci series
@@ -108,7 +110,7 @@ entry:
   ret void
 }
 ```
-`coral` makes uses of a C runtime library to handle the dynamic features of the language. The source code is at [coral/runtime](coral/runtime).
+`coral` makes uses of a C runtime library to handle the dynamic features of the language. The source code is at [coral/runtime](coral/runtime). The long term goal is to remove this runtime library and write pure LLVM IR for the dynamic features.
 
 ## The compiler
 `coral` attempts to infer the types of the values at compile time to make a direct translation to pure LLVM IR code (see [coral/ast.py](coral/ast.py)). If type inference is not possible, the values are wrapped by the `CRObject` box and all manipulations are ruled by the runtime library.
@@ -119,7 +121,7 @@ Functions are always boxed by the `CRFunction` struct, but the call is dispatche
 
 Since the values are immutable we don't have any reference cycles. `coral` uses reference counting as gargabe collection strategy. Every function has a local `__gc__` array which collects objects to be released at the function exit.
 
-Below is function which triggers the boxing of multiple objects. As said before, strings are always boxed. Since the first member of the tuple is "obfuscated" by a condition, that tuple will be also boxed:
+Below we have a function which triggers the boxing of multiple objects. As said before, strings are always boxed. Since the first member of the tuple is "obfuscated" by a condition, that tuple will be also boxed:
 ```
 let foo = fn (n, t) => {
     if (n > 0) {
