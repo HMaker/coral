@@ -119,7 +119,7 @@ Functions are always boxed by the `CRFunction` struct, but the call is dispatche
 
 Since the values are immutable we don't have any reference cycles. `coral` uses reference counting as gargabe collection strategy. Every function has a local `__gc__` array which collects objects to be released at the function exit.
 
-Below is function which triggers the boxing of multiple objects. Since the first member of the tuple is "obfuscated" by a condition, that tuple will be boxed:
+Below is function which triggers the boxing of multiple objects. As said before, strings are always boxed. Since the first member of the tuple is "obfuscated" by a condition, that tuple will be also boxed:
 ```
 let foo = fn (n, t) => {
     if (n > 0) {
@@ -212,7 +212,7 @@ entry.if.endif:
 ```
 Calls to `CRObjectArray_push()` pushes objects into the garbage collection list. Calls to `CRObjectArray_release()` releases the objects and destroy the list itself. Objects are destroyed only when their refcount reaches 0.
 
-`coral` also attempts to preserve the tail calls by delegating the arguments cleanup to the called function, this way it can release the `__gc__` list without waiting for the call to return. It also forwards as is the returned value from the called function. The downside of this approach is that calls which need boxed arguments, but are not at the tail, will have a little overhead to create new references.
+`coral` also attempts to preserve tail calls by delegating the arguments cleanup to the called function, this way it can release the `__gc__` list without waiting for the call to return. It also forwards as is the returned value from the called function. The downside of this approach is that calls which need boxed arguments, but are not at the tail, will have a little overhead to create new references.
 
 ## Installation
 It requires `Python 3.9+` and `LLVM 10-14`. After installing those dependencies you can clone this repo and setup the Python environment:
