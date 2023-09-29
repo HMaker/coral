@@ -1,6 +1,116 @@
 import enum
 import typing as t
-from coral import parser
+
+
+SyntaxTerm: t.TypeAlias = t.Union[
+    'LiteralSyntax',
+    'LiteralBooleanSyntax',
+    'TupleSyntax',
+    'IdentifierSyntax',
+    'LetExpressionSyntax',
+    'PrintSyntax',
+    'FirstSyntax',
+    'SecondSyntax',
+    'BinaryExpressionSyntax',
+    'CallExpressionSyntax',
+    'ConditionalExpressionSyntax',
+    'FunctionExpressionSyntax'
+]
+
+class SyntaxLocation(t.TypedDict):
+    line: int
+    start: int
+    end: int
+    filename: str
+
+class LiteralSyntax(t.TypedDict):
+    kind: t.Literal['Int', 'Str']
+    value: t.Union[int, str]
+    location: SyntaxLocation
+
+class LiteralBooleanSyntax(t.TypedDict):
+    kind: t.Literal['Bool']
+    value: bool
+    location: SyntaxLocation
+
+class TupleSyntax(t.TypedDict):
+    kind: t.Literal['Tuple']
+    first: SyntaxTerm
+    second: SyntaxTerm
+    location: SyntaxLocation
+
+class IdentifierSyntax(t.TypedDict):
+    kind: t.Literal['Var']
+    text: str
+    location: SyntaxLocation
+
+class ParameterSyntax(t.TypedDict):
+    text: str
+    location: SyntaxLocation
+
+class LetExpressionSyntax(t.TypedDict):
+    kind: t.Literal['Let']
+    name: ParameterSyntax
+    value: SyntaxTerm
+    next: SyntaxTerm
+    location: SyntaxLocation
+
+class PrintSyntax(t.TypedDict):
+    kind: t.Literal['Print']
+    value: SyntaxTerm
+    location: SyntaxLocation
+
+class FirstSyntax(t.TypedDict):
+    kind: t.Literal['First']
+    value: SyntaxTerm
+    location: SyntaxLocation
+
+class SecondSyntax(t.TypedDict):
+    kind: t.Literal['Second']
+    value: SyntaxTerm
+    location: SyntaxLocation
+
+SyntaxBinaryOperator: t.TypeAlias = t.Literal[
+    'Add',
+    'Sub',
+    'Mul',
+    'Div',
+    'Rem',
+    'Eq', 'Neq',
+    'Lt', 'Lte',
+    'Gt', 'Gte',
+    'And', 'Or'
+]
+class BinaryExpressionSyntax(t.TypedDict):
+    kind: t.Literal['Binary']
+    lhs: SyntaxTerm
+    op: SyntaxBinaryOperator
+    rhs: SyntaxTerm
+    location: SyntaxLocation
+
+class CallExpressionSyntax(t.TypedDict):
+    kind: t.Literal['Call']
+    callee: SyntaxTerm
+    arguments: t.List[SyntaxTerm]
+    location: SyntaxLocation
+
+class ConditionalExpressionSyntax(t.TypedDict):
+    kind: t.Literal['If']
+    condition: SyntaxTerm
+    then: SyntaxTerm
+    otherwise: SyntaxTerm
+    location: SyntaxLocation
+
+class FunctionExpressionSyntax(t.TypedDict):
+    kind: t.Literal['Function']
+    parameters: t.List[ParameterSyntax]
+    value: SyntaxTerm
+    location: SyntaxLocation
+
+class FileSyntax(t.TypedDict):
+    name: str
+    expression: SyntaxTerm
+    location: SyntaxLocation
 
 
 class NativeType(enum.Enum):
@@ -530,8 +640,8 @@ class BinaryOperator(enum.Enum):
 
     def __str__(self) -> str:
         return self.name
-    
-_RINHAOP_PARSE_DICT: t.Final['t.Dict[parser.BinaryOperator, BinaryOperator]'] = {
+
+_RINHAOP_PARSE_DICT: t.Final[t.Dict[SyntaxBinaryOperator, BinaryOperator]] = {
     'Add': BinaryOperator.ADD,
     'Sub': BinaryOperator.SUB,
     'Mul': BinaryOperator.MUL,
@@ -888,7 +998,7 @@ class Program:
         self.body = body
 
 
-def typecheck(syntax: parser.SyntaxTerm) -> Expression:
+def typecheck(syntax: SyntaxTerm) -> Expression:
     globalscope = TypeScope(None)
     allvars: t.List[ScopeVar] = []
     ast = build_typed_ast(syntax, None, globalscope, allvars)
@@ -905,7 +1015,7 @@ def typecheck(syntax: parser.SyntaxTerm) -> Expression:
 
 
 def build_typed_ast(
-    term: parser.SyntaxTerm,
+    term: SyntaxTerm,
     parent: t.Optional[Expression],
     scope: TypeScope,
     vars: t.List[ScopeVar],
@@ -913,7 +1023,7 @@ def build_typed_ast(
 ) -> Expression:
     match term['kind']:
         case 'Var':
-            term = t.cast(parser.IdentifierSyntax, term)
+            term = t.cast(IdentifierSyntax, term)
             try:
                 var = scope.get(term['text'])
             except ValueError as e:
@@ -925,18 +1035,18 @@ def build_typed_ast(
                 var=var
             )
         case 'Int':
-            term = t.cast(parser.LiteralSyntax, term)
+            term = t.cast(LiteralSyntax, term)
             value = t.cast(int, term['value'])
             return LiteralIntegerValue(type_=BOUND_INTEGER_TYPE, scope=scope, parent=parent, value=value)
         case 'Str':
-            term = t.cast(parser.LiteralSyntax, term)
+            term = t.cast(LiteralSyntax, term)
             value2 = t.cast(str, term['value'])
             return LiteralStringValue(type_=BOUND_STRING_TYPE, scope=scope, parent=parent, value=value2)
         case 'Bool':
-            term = t.cast(parser.LiteralBooleanSyntax, term)
+            term = t.cast(LiteralBooleanSyntax, term)
             return LiteralBooleanValue(type_=BOUND_BOOLEAN_TYPE, scope=scope, parent=parent, value=term['value'])
         case 'Tuple':
-            term = t.cast(parser.TupleSyntax, term)
+            term = t.cast(TupleSyntax, term)
             first = build_typed_ast(term['first'], None, scope, vars)
             second = build_typed_ast(term['second'], None, scope, vars)
             tuple_ = TupleExpression(
@@ -950,7 +1060,7 @@ def build_typed_ast(
             second.parent = tuple_
             return tuple_
         case 'Call':
-            term = t.cast(parser.CallExpressionSyntax, term)
+            term = t.cast(CallExpressionSyntax, term)
             callee = build_typed_ast(term['callee'], None, scope, vars)
             args = [
                 build_typed_ast(arg, None, scope, vars)
@@ -968,7 +1078,7 @@ def build_typed_ast(
                 arg.parent = call
             return call
         case 'Print':
-            term = t.cast(parser.PrintSyntax, term)
+            term = t.cast(PrintSyntax, term)
             value3 = build_typed_ast(term['value'], None, scope, vars)
             theprint = PrintExpression(
                 type_=BOUND_ANY_TYPE,
@@ -979,7 +1089,7 @@ def build_typed_ast(
             value3.parent = theprint
             return theprint
         case 'First':
-            term = t.cast(parser.FirstSyntax, term)
+            term = t.cast(FirstSyntax, term)
             value4 = build_typed_ast(term['value'], None, scope, vars)
             first = FirstExpression(
                 type_=BOUND_ANY_TYPE,
@@ -990,7 +1100,7 @@ def build_typed_ast(
             value4.parent = first
             return first
         case 'Second':
-            term = t.cast(parser.SecondSyntax, term)
+            term = t.cast(SecondSyntax, term)
             value4 = build_typed_ast(term['value'], None, scope, vars)
             second = SecondExpression(
                 type_=BOUND_ANY_TYPE,
@@ -1001,7 +1111,7 @@ def build_typed_ast(
             value4.parent = second
             return second
         case 'Binary':
-            term = t.cast(parser.BinaryExpressionSyntax, term)
+            term = t.cast(BinaryExpressionSyntax, term)
             left = build_typed_ast(term['lhs'], None, scope, vars)
             right = build_typed_ast(term['rhs'], None, scope, vars)
             exp = BinaryExpression(
@@ -1016,7 +1126,7 @@ def build_typed_ast(
             right.parent = exp
             return exp
         case 'If':
-            term = t.cast(parser.ConditionalExpressionSyntax, term)
+            term = t.cast(ConditionalExpressionSyntax, term)
             cond = build_typed_ast(term['condition'], None, scope, vars)
             then = build_typed_ast(term['then'], None, scope, vars)
             alternate = build_typed_ast(term['otherwise'], None, scope, vars)
@@ -1033,7 +1143,7 @@ def build_typed_ast(
             alternate.parent = exp2
             return exp2
         case 'Function':
-            term = t.cast(parser.FunctionExpressionSyntax, term)
+            term = t.cast(FunctionExpressionSyntax, term)
             funcscope = TypeScope(scope)
             params = [
                 funcscope.declare(param['text'], BOUND_ANY_TYPE)
@@ -1060,7 +1170,7 @@ def build_typed_ast(
             vars.extend(params)
             return func
         case 'Let':
-            term = t.cast(parser.LetExpressionSyntax, term)
+            term = t.cast(LetExpressionSyntax, term)
             if term['name']['text'] != '_' and term['value']['kind'] == 'Function':
                 var = scope.declare(term['name']['text'], BOUND_ANY_TYPE)
                 binding = ReferenceExpression(

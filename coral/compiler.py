@@ -1175,6 +1175,11 @@ class CoralFunctionType(ast.BoundFunctionType):
         self.has_globals: t.Final = has_globals
         self.name: t.Final = name
 
+    @property
+    def ll_return_type(self) -> t.Optional[ir.Type]:
+        if self.llfunc is not None:
+            return self.llfunc.ftype.return_type
+
     def __eq__(self, value: object) -> bool:
         return (
             super().__eq__(value) and
@@ -1196,17 +1201,18 @@ class CoralFunction(CoralObject):
     from the CRFunction struct.
 
     Functions which return boxed values (aka CRObject*) must return it with the refcount incremented.
-    The function caller always owns a reference to the returned boxed values, thus it will be collected
-    by its GC list. The called function DOES NOT own any reference to its argument, thus it won't try to collect it.
+    The function CALLER always owns a reference to the returned boxed values, thus it will be collected
+    by its GC list. The CALLED function OWNS a reference to any of the arguments, thus it will be
+    collect by its GC list.
 
     To sum up the calling convention is as follow:
-    - The CALLER owns the references to the arguments
     - The CALLER pass arguments in the same order and with the same types as defined in the CALLEE signature
-    - The CALLER must kept the references to the arguments live for the duration of the call
-    - The CALLEE must return a value of the same type as defined in its signature
+    - The CALLEE owns the references to the arguments
+    - The CALLEE must return a value of the same type as defined by its signature
     - The CALLEE must kept the return value live after the return
     - The CALLER owns the reference to the returned value
-    - The CALLER is responsible for cleaning up both arguments and the retuned value
+    - The CALLEE is responsible for cleaning up the arguments
+    - The CALLER is responsible for cleaning up the retuned value
     """
 
     def __init__(
@@ -1231,33 +1237,58 @@ class CoralFunction(CoralObject):
         cls,
         scope: 'CoralFunctionCompilation',
         callee: CoralObject,
-        args: t.List[CoralObject]
+        args: t.List[CoralObject],
+        *,
+        tail: bool=False
     ) -> CoralObject:
         if callee.boundtype.type != ast.NativeType.FUNCTION:
-            return scope.collect_object(CoralObject(
+            # the callee needs a new reference to all the arguments, including self
+            callee = callee.box()
+            callee.incref()
+            varargs = [arg.box() for arg in args]
+            for arg in varargs:
+                arg.incref()
+            if tail:
+                scope.handle_gc_cleanup()
+            return_value = CoralObject(
                 type_=ast.BOUND_UNDEFINED_TYPE,
                 lltype=scope.runtime.crfunction_call.ftype.return_type,
                 value=scope.builder.call(
                     fn=scope.runtime.crfunction_call,
                     # CRObject* self, size_t argscount, varargs...
-                    args=[callee.value, LL_INT(len(args))] + [arg.value for arg in args]
+                    args=[callee.value, LL_INT(len(args))] + varargs,
+                    tail='musttail' if tail else False
                 ),
                 boxed=True,
                 scope=scope
-            ))
+            )
+            if tail:
+                return return_value
+            return scope.collect_object(return_value)
         callee = t.cast(CoralFunction, callee)
         boundtype = callee.function_type
         # if we don't know the static function, we need to dispatch the call dynamically
         if boundtype.llfunc is None:
-            return scope.collect_object(CoralObject.wrap_boxed_value(
+            callee = callee.box()
+            callee.incref()
+            varargs = [arg.box() for arg in args]
+            for arg in varargs:
+                arg.incref()
+            if tail:
+                scope.handle_gc_cleanup()
+            return_value = CoralObject.wrap_boxed_value(
                 boundtype=boundtype.return_type,
                 value=scope.builder.call(
                     fn=scope.runtime.crfunction_call,
                     # CRObject* self, size_t argscount, varargs...
-                    args=[callee.value, LL_INT(len(args))] + [arg.value for arg in args]
+                    args=[callee.value, LL_INT(len(args))] + varargs,
+                    tail='musttail' if tail else False
                 ),
                 scope=scope
-            ))
+            )
+            if tail:
+                return return_value
+            return scope.collect_object(return_value)
         callee = callee.unbox()
         lltype = t.cast(ir.FunctionType, boundtype.llfunc.ftype)
         if boundtype.has_globals:
@@ -1267,13 +1298,23 @@ class CoralFunction(CoralObject):
         if len(args) != len(param_types):
             raise TypeError(f"{boundtype.name} expects '{len(param_types)}' arguments, but got {len(args)}")
         crobject_ptr = scope.runtime.crobject_struct.as_pointer()
-        raw_args = [
-            arg.box().value if param_types[i] == crobject_ptr else arg.unbox().value
-            for i, arg in enumerate(args)
-        ]
+        raw_args = []
+        for i, arg in enumerate(args):
+            if param_types[i] == crobject_ptr:
+                arg = arg.box()
+                arg.incref()
+                raw_args.append(arg.value)
+            else:
+                raw_args.append(arg.unbox().value)
         if boundtype.has_globals:
             raw_args.insert(0, callee.globals_ptr)
-        raw_return_value = scope.builder.call(fn=boundtype.llfunc, args=raw_args)
+        if tail:
+            scope.handle_gc_cleanup()
+        raw_return_value = scope.builder.call(
+            fn=boundtype.llfunc,
+            args=raw_args,
+            tail='musttail' if tail else False
+        )
         match boundtype.return_type.type:
             case ast.NativeType.INTEGER:
                 return CoralInteger(
@@ -1293,11 +1334,14 @@ class CoralFunction(CoralObject):
                 )
             # all types below are boxed in any return
             case _:
-                return scope.collect_object(CoralObject.wrap_boxed_value(
+                return_value = CoralObject.wrap_boxed_value(
                     boundtype=boundtype.return_type,
                     value=raw_return_value,
                     scope=scope
-                ))
+                )
+                if tail:
+                    return return_value
+                return scope.collect_object(return_value)
 
     def box(self) -> 'CoralFunction':
         if self.boxed: return self
@@ -1348,8 +1392,8 @@ class CoralFunctionCompilation:
         *,
         globals_ptr: ir.NamedValue, # CRObject**
         globals_index: t.Dict[str, ast.ScopeVar],
-        return_type: ir.Type,
-        return_boxed: bool,
+        boundtype: CoralFunctionType,
+        returns_boxed: bool,
         scope_path: str,
         functions_count: int,
         builder: ir.IRBuilder,
@@ -1357,8 +1401,8 @@ class CoralFunctionCompilation:
     ) -> None:
         self.globals_ptr: t.Final = globals_ptr
         self.globals_index: t.Final = globals_index
-        self.return_type: t.Final = return_type
-        self.return_boxed: t.Final = return_boxed
+        self.boundtype: t.Final = boundtype
+        self.returns_boxed: t.Final = returns_boxed
         self.vars: t.Final[t.Dict[str, CoralObject]] = {}
         self.scope_path: t.Final = scope_path
         self.functions_count = functions_count
@@ -1372,8 +1416,10 @@ class CoralFunctionCompilation:
             name='__gc__'
         )
         self._gc_objects: t.Final[t.Set[CoralObject]] = set()
-        self._gc_cleanup_count = 0
-        self._returns_count = 0
+
+    @property
+    def return_type(self) -> ir.Type:
+        return self.boundtype.llfunc.ftype.return_type
 
     def add_local_var(self, name: str, value: CoralObject) -> None:
         if name in self.vars:
@@ -1415,21 +1461,19 @@ class CoralFunctionCompilation:
             self._gc_objects.add(obj)
         return obj
 
-    def handle_return(self, result: _T) -> _T:
-        if self.return_boxed:
+    def handle_return_with_value(self, result: CoralObject) -> CoralObject:
+        if self.returns_boxed:
             result = result.box()
             result.incref()
             self.handle_gc_cleanup()
             self.builder.ret(result.value)
-            self._returns_count += 1
             return result
-        elif result.lltype == self.return_type:
+        elif result.lltype == self.boundtype.llfunc.ftype.return_type:
             self.handle_gc_cleanup()
             self.builder.ret(result.value)
-            self._returns_count += 1
             return result
         else:
-            raise TypeError(f"expected return type '{self.return_type}', but got '{result.lltype}'")
+            raise TypeError(f"expected return type '{self.boundtype.llfunc.ftype.return_type}', but got '{result.lltype}'")
 
     def handle_gc_cleanup(self) -> None:
         """Releases the GC list, this must be called only at the exit of the function"""
@@ -1437,10 +1481,10 @@ class CoralFunctionCompilation:
             raise ValueError("GC was finalized, can't run any new cleanup")
         if len(self._gc_objects) > 0:
             self.builder.call(fn=self.runtime.crobjectarray_release, args=[self._gc_ptr])
-            self._gc_cleanup_count += 1
 
     def handle_gc_finalization(self) -> None:
-        # grow the GC list, this is the max size the list will ever need since we dont have any loop
+        """Sets up the needed GC list size"""
+        # this is the max size the list will ever need since we dont have any loop
         # every instruction is ran only once per call
         if len(self._gc_objects) > 0:
             self._gc_size.constant = len(self._gc_objects)
@@ -1448,12 +1492,6 @@ class CoralFunctionCompilation:
             self.entryblock.instructions.remove(self._gc_ptr)
         self._gc_ptr = None
         self._gc_objects.clear()
-
-    def get_gc_cleanups(self) -> int:
-        return self._gc_cleanup_count
-    
-    def get_returns_count(self) -> int:
-        return self._returns_count
 
 
 class CoralCompiler:
@@ -1511,8 +1549,13 @@ class CoralCompiler:
         main_scope = CoralFunctionCompilation(
             globals_ptr=ir.Constant(runtime.crobject_struct.as_pointer().as_pointer(), 0),
             globals_index={},
-            return_type=ir.VoidType(),
-            return_boxed=False,
+            boundtype=CoralFunctionType(
+                params=(),
+                return_type=ast.BOUND_UNDEFINED_TYPE,
+                llfunc=main,
+                name='__main__'
+            ),
+            returns_boxed=False,
             scope_path='',
             functions_count=0,
             builder=main_builder,
@@ -1536,86 +1579,110 @@ class CoralCompiler:
     ) -> CoralObject:
         match node:
             case ast.ReferenceExpression():
-                return self._may_return_from_function(scope.get_var(node.name), is_return_branch)
+                if is_return_branch:
+                    return scope.handle_return_with_value(scope.get_var(node.name))
+                return scope.get_var(node.name)
             case ast.LiteralIntegerValue(value=value):
-                return self._may_return_from_function(
-                    CoralInteger(
-                        type_=ast.BOUND_INTEGER_TYPE,
-                        lltype=LL_INT,
-                        value=ir.Constant(LL_INT, value),
-                        boxed=False,
-                        scope=scope
-                    ),
-                    is_return_branch
+                obj = CoralInteger(
+                    type_=ast.BOUND_INTEGER_TYPE,
+                    lltype=LL_INT,
+                    value=LL_INT(value),
+                    boxed=False,
+                    scope=scope
                 )
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
             case ast.LiteralBooleanValue(value=value):
-                return self._may_return_from_function(
-                    CoralInteger(
-                        type_=ast.BOUND_BOOLEAN_TYPE,
-                        lltype=LL_BOOL,
-                        value=ir.Constant(LL_BOOL, int(value)),
-                        boxed=False,
-                        scope=scope
-                    ),
-                    is_return_branch
+                obj = CoralInteger(
+                    type_=ast.BOUND_BOOLEAN_TYPE,
+                    lltype=LL_BOOL,
+                    value=ir.Constant(LL_BOOL, int(value)),
+                    boxed=False,
+                    scope=scope
                 )
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
             case ast.LiteralStringValue(value=value):
+                # box the string right here since we can't do anything with the unboxed version
                 compiledstr = self._compile_raw_string(value)
-                return self._may_return_from_function(
-                    # box the string right here since we can't do anything with the unboxed version
-                    CoralString(
-                        type_=ast.BOUND_STRING_TYPE,
-                        lltype=LL_CHAR.as_pointer(),
-                        # drop the array pointer, we just need a plain char* like pointer
-                        value=scope.builder.bitcast(compiledstr, LL_CHAR.as_pointer()),
-                        boxed=False,
-                        scope=scope
-                    ).box(),
-                    is_return_branch
-                )
+                obj = CoralString(
+                    type_=ast.BOUND_STRING_TYPE,
+                    lltype=LL_CHAR.as_pointer(),
+                    # drop the array pointer, we just need a plain char* like pointer
+                    value=scope.builder.bitcast(compiledstr, LL_CHAR.as_pointer()),
+                    boxed=False,
+                    scope=scope
+                ).box()
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
             case ast.TupleExpression(first=first, second=second):
-                coraltuple = CoralTuple.create_unboxed(
+                obj = CoralTuple.create_unboxed(
                     first=self._compile_node(first, scope, is_return_branch=False),
                     second=self._compile_node(second, scope, is_return_branch=False),
                     scope=scope
                 )
                 if not node.boundtype.is_static:
-                    coraltuple = coraltuple.box()
-                return self._may_return_from_function(coraltuple, is_return_branch)
-            case ast.CallExpression(callee=callee, args=args):
-                return self._may_return_from_function(
-                    CoralFunction.call(
-                        scope,
-                        self._compile_node(callee, scope, is_return_branch=False),
-                        [self._compile_node(arg, scope, is_return_branch=False) for arg in args]
-                    ),
-                    is_return_branch
-                )
+                    obj = obj.box()
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
+            case ast.CallExpression():
+                return self._compile_function_call(node, scope, is_return_branch=is_return_branch)
             case ast.FirstExpression(value=value):
-                return self._may_return_from_function(
-                    CoralTuple.get_first(self._compile_node(value, scope, is_return_branch=False)),
-                    is_return_branch
-                )
+                obj = CoralTuple.get_first(self._compile_node(value, scope, is_return_branch=False))
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
             case ast.SecondExpression(value=value):
-                return self._may_return_from_function(
-                    CoralTuple.get_second(self._compile_node(value, scope, is_return_branch=False)),
-                    is_return_branch
-                )
+                obj = CoralTuple.get_second(self._compile_node(value, scope, is_return_branch=False))
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
             case ast.PrintExpression(value=value):
-                return self._may_return_from_function(
-                    self._compile_node(value, scope, is_return_branch=False).print(),
-                    is_return_branch
-                )
+                obj = self._compile_node(value, scope, is_return_branch=False).print()
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
             case ast.BinaryExpression():
-                return self._compile_binary_expression(node, scope)
+                obj = self._compile_binary_expression(node, scope)
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
             case ast.ConditionalExpression():
                 return self._compile_condition(node, scope, is_return_branch=is_return_branch)
             case ast.FunctionExpression():
-                return self._compile_function(node, scope)
+                obj = self._compile_function(node, scope)
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
             case ast.LetExpression():
                 return self._compile_declaration(node, scope, is_return_branch=is_return_branch)
             case _:
                 raise ValueError(f"{node} is not supported yet")
+
+    def _compile_function_call(
+        self,
+        node: ast.CallExpression,
+        scope: CoralFunctionCompilation,
+        is_return_branch: bool=False
+    ) -> CoralObject:
+        callobj = self._compile_node(node.callee, scope, is_return_branch=False)
+        callargs = [self._compile_node(arg, scope, is_return_branch=False) for arg in node.args]
+        if is_return_branch:
+            if callobj.boundtype.type == ast.NativeType.FUNCTION:
+                callobj = t.cast(CoralFunction, callobj)
+                if callobj.function_type.llfunc is None:
+                    if not scope.returns_boxed:
+                        raise TypeError(f"function '{scope.boundtype.name}' must return '{scope.boundtype.ll_return_type}', but got CRObject*")
+                elif callobj.function_type.ll_return_type != scope.boundtype.ll_return_type:
+                    raise TypeError(f"function '{scope.boundtype.name}' must return '{scope.boundtype.ll_return_type}', but got '{callobj.function_type.ll_return_type}'")
+            obj = CoralFunction.call(scope, callobj, callargs, tail=True)
+            scope.builder.ret(obj.value)
+            return obj
+        return CoralFunction.call(scope, callobj, callargs)
 
     def _compile_function(self, node: ast.FunctionExpression, scope: CoralFunctionCompilation) -> CoralFunction:
         """Compiles the function definition and returns a function object ready to be called."""
@@ -1681,8 +1748,8 @@ class CoralCompiler:
         child_scope = CoralFunctionCompilation(
             globals_ptr=child_globals_ptr,
             globals_index=child_globals_index,
-            return_type=llfunc_type.return_type,
-            return_boxed=llfunc_type.return_type == crobject_struct_ptr,
+            boundtype=boundtype,
+            returns_boxed=llfunc_type.return_type == crobject_struct_ptr,
             scope_path=llname,
             functions_count=0,
             builder=child_builder,
@@ -1750,12 +1817,13 @@ class CoralCompiler:
                         boxed=True,
                         scope=child_scope
                     )
+            # collect the boxed arguments as mandates the calling convention
+            if paramvar.boxed:
+                child_scope.collect_object(paramvar)
             if param.boundtype.is_static:
                 paramvar = paramvar.unbox()
             child_scope.add_local_var(param.name, paramvar)
-        return_value = self._compile_node(node.body, child_scope, is_return_branch=True)
-        if child_scope.get_returns_count() == 0:
-            child_scope.handle_return(return_value)
+        self._compile_node(node.body, child_scope, is_return_branch=True)
         child_scope.handle_gc_finalization()
         scope.functions_count += 1
 
@@ -1782,8 +1850,13 @@ class CoralCompiler:
         dynamic_scope = CoralFunctionCompilation(
             globals_ptr=llfunc_dynamic.args[0],
             globals_index={},
-            return_type=llfunc_dynamic_type.return_type,
-            return_boxed=True,
+            boundtype=CoralFunctionType(
+                params=(),
+                return_type=ast.BOUND_UNDEFINED_TYPE,
+                llfunc=llfunc_dynamic,
+                name=llfunc_dynamic.name
+            ),
+            returns_boxed=True,
             scope_path='',
             functions_count=0,
             builder=dynamic_builder,
@@ -1868,16 +1941,6 @@ class CoralCompiler:
             boxed=True,
             scope=scope
         ))
-
-    def _may_return_from_function(self, result: _T, is_return_branch: bool) -> _T:
-        """Called by terminal AST nodes to signal possible values of a function return.
-        
-        Actually only IF expressions may include implicit returns, but only when they are immediate
-        child of a Function or transitively through another IF or Let which is child of the former.
-        """
-        if is_return_branch:
-            return result.scope.handle_return(result)
-        return result
 
     def _compile_condition(
         self,

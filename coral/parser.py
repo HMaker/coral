@@ -1,9 +1,9 @@
-from abc import ABC # make mypyc compile ABC first
 import typing as t
 import lark
 from lark import Lark, Token, v_args
 from lark.visitors import Transformer
 from lark.tree import Meta
+from coral import ast
 
 
 GRAMMAR: t.Final = r"""
@@ -61,118 +61,8 @@ arguments: [term ("," term)*]
 %ignore WS
 """
 
-SyntaxTerm: t.TypeAlias = t.Union[
-    'LiteralSyntax',
-    'LiteralBooleanSyntax',
-    'TupleSyntax',
-    'IdentifierSyntax',
-    'LetExpressionSyntax',
-    'PrintSyntax',
-    'FirstSyntax',
-    'SecondSyntax',
-    'BinaryExpressionSyntax',
-    'CallExpressionSyntax',
-    'ConditionalExpressionSyntax',
-    'FunctionExpressionSyntax'
-]
 
-class SyntaxLocation(t.TypedDict):
-    line: int
-    start: int
-    end: int
-    filename: str
-
-class LiteralSyntax(t.TypedDict):
-    kind: t.Literal['Int', 'Str']
-    value: t.Union[int, str]
-    location: SyntaxLocation
-
-class LiteralBooleanSyntax(t.TypedDict):
-    kind: t.Literal['Bool']
-    value: bool
-    location: SyntaxLocation
-
-class TupleSyntax(t.TypedDict):
-    kind: t.Literal['Tuple']
-    first: SyntaxTerm
-    second: SyntaxTerm
-    location: SyntaxLocation
-
-class IdentifierSyntax(t.TypedDict):
-    kind: t.Literal['Var']
-    text: str
-    location: SyntaxLocation
-
-class ParameterSyntax(t.TypedDict):
-    text: str
-    location: SyntaxLocation
-
-class LetExpressionSyntax(t.TypedDict):
-    kind: t.Literal['Let']
-    name: ParameterSyntax
-    value: SyntaxTerm
-    next: SyntaxTerm
-    location: SyntaxLocation
-
-class PrintSyntax(t.TypedDict):
-    kind: t.Literal['Print']
-    value: SyntaxTerm
-    location: SyntaxLocation
-
-class FirstSyntax(t.TypedDict):
-    kind: t.Literal['First']
-    value: SyntaxTerm
-    location: SyntaxLocation
-
-class SecondSyntax(t.TypedDict):
-    kind: t.Literal['Second']
-    value: SyntaxTerm
-    location: SyntaxLocation
-
-BinaryOperator: t.TypeAlias = t.Literal[
-    'Add',
-    'Sub',
-    'Mul',
-    'Div',
-    'Rem',
-    'Eq', 'Neq',
-    'Lt', 'Lte',
-    'Gt', 'Gte',
-    'And', 'Or'
-]
-class BinaryExpressionSyntax(t.TypedDict):
-    kind: t.Literal['Binary']
-    lhs: SyntaxTerm
-    op: BinaryOperator
-    rhs: SyntaxTerm
-    location: SyntaxLocation
-
-class CallExpressionSyntax(t.TypedDict):
-    kind: t.Literal['Call']
-    callee: SyntaxTerm
-    arguments: t.List[SyntaxTerm]
-    location: SyntaxLocation
-
-class ConditionalExpressionSyntax(t.TypedDict):
-    kind: t.Literal['If']
-    condition: SyntaxTerm
-    then: SyntaxTerm
-    otherwise: SyntaxTerm
-    location: SyntaxLocation
-
-class FunctionExpressionSyntax(t.TypedDict):
-    kind: t.Literal['Function']
-    parameters: t.List[ParameterSyntax]
-    value: SyntaxTerm
-    location: SyntaxLocation
-
-class FileSyntax(t.TypedDict):
-    name: str
-    expression: SyntaxTerm
-    location: SyntaxLocation
-
-
-_OPERATOR2NAME: t.Final['t.Dict[str, BinaryOperator]'] = {
+_OPERATOR2NAME: t.Final[t.Dict[str, ast.SyntaxBinaryOperator]] = {
     '+': 'Add',
     '-': 'Sub',
     '*': 'Mul',
@@ -189,13 +79,13 @@ _OPERATOR2NAME: t.Final['t.Dict[str, BinaryOperator]'] = {
 }
 
 @v_args(meta=True)
-class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
+class _Lark2RinhaAST(Transformer[Token, ast.SyntaxTerm | ast.FileSyntax]):
 
     def __init__(self, filename: str, visit_tokens: bool = True) -> None:
         super().__init__(visit_tokens)
         self.filename: t.Final = filename
 
-    def file(self, meta: Meta, children: t.List[SyntaxTerm]) -> FileSyntax:
+    def file(self, meta: Meta, children: t.List[ast.SyntaxTerm]) -> ast.FileSyntax:
         return {
             'name': self.filename,
             'expression': children[0],
@@ -207,10 +97,10 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
     
-    def let(self, meta: Meta, children: t.List[t.Union[ParameterSyntax, SyntaxTerm]]) -> LetExpressionSyntax:
-        name = t.cast(ParameterSyntax, children[0])
-        value = t.cast(SyntaxTerm, children[1])
-        _next = t.cast(SyntaxTerm, children[2])
+    def let(self, meta: Meta, children: t.List[t.Union[ast.ParameterSyntax, ast.SyntaxTerm]]) -> ast.LetExpressionSyntax:
+        name = t.cast(ast.ParameterSyntax, children[0])
+        value = t.cast(ast.SyntaxTerm, children[1])
+        _next = t.cast(ast.SyntaxTerm, children[2])
         return {
             'kind': 'Let',
             'name': name,
@@ -224,9 +114,9 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
     
-    def fn(self, meta: Meta, children: t.List[t.Union[t.List[ParameterSyntax], SyntaxTerm]]) -> FunctionExpressionSyntax:
-        params = t.cast(t.List[ParameterSyntax], children[0])
-        value = t.cast(SyntaxTerm, children[1])
+    def fn(self, meta: Meta, children: t.List[t.Union[t.List[ast.ParameterSyntax], ast.SyntaxTerm]]) -> ast.FunctionExpressionSyntax:
+        params = t.cast(t.List[ast.ParameterSyntax], children[0])
+        value = t.cast(ast.SyntaxTerm, children[1])
         return {
             'kind': 'Function',
             'parameters': params,
@@ -239,12 +129,12 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
 
-    def parameters(self, meta: Meta, children: t.List[t.Optional[ParameterSyntax]]) -> t.List[ParameterSyntax]:
+    def parameters(self, meta: Meta, children: t.List[t.Optional[ast.ParameterSyntax]]) -> t.List[ast.ParameterSyntax]:
         if children is None or children[0] is None:
             return []
-        return t.cast(t.List[ParameterSyntax], children)
+        return t.cast(t.List[ast.ParameterSyntax], children)
 
-    def parameter(self, meta: Meta, children: t.List[lark.Token]) -> ParameterSyntax:
+    def parameter(self, meta: Meta, children: t.List[lark.Token]) -> ast.ParameterSyntax:
         return {
             'text': children[0].value,
             'location': {
@@ -255,7 +145,7 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
     
-    def print(self, meta: Meta, children: t.List[SyntaxTerm]) -> PrintSyntax:
+    def print(self, meta: Meta, children: t.List[ast.SyntaxTerm]) -> ast.PrintSyntax:
         return {
             'kind': 'Print',
             'value': children[0],
@@ -267,7 +157,7 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
     
-    def first(self, meta: Meta, children: t.List[SyntaxTerm]) -> FirstSyntax:
+    def first(self, meta: Meta, children: t.List[ast.SyntaxTerm]) -> ast.FirstSyntax:
         return {
             'kind': 'First',
             'value': children[0],
@@ -279,7 +169,7 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
     
-    def second(self, meta: Meta, children: t.List[SyntaxTerm]) -> SecondSyntax:
+    def second(self, meta: Meta, children: t.List[ast.SyntaxTerm]) -> ast.SecondSyntax:
         return {
             'kind': 'Second',
             'value': children[0],
@@ -291,9 +181,9 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
     
-    def call(self, meta: Meta, children: t.List[t.Union[t.List[SyntaxTerm], SyntaxTerm]]) -> CallExpressionSyntax:
-        callee = t.cast(SyntaxTerm, children[0])
-        args = t.cast(t.List[SyntaxTerm], children[1])
+    def call(self, meta: Meta, children: t.List[t.Union[t.List[ast.SyntaxTerm], ast.SyntaxTerm]]) -> ast.CallExpressionSyntax:
+        callee = t.cast(ast.SyntaxTerm, children[0])
+        args = t.cast(t.List[ast.SyntaxTerm], children[1])
         return {
             'kind': 'Call',
             'callee': callee,
@@ -306,12 +196,12 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
 
-    def arguments(self, meta: Meta, children: t.List[t.Optional[SyntaxTerm]]) -> t.List[SyntaxTerm]:
+    def arguments(self, meta: Meta, children: t.List[t.Optional[ast.SyntaxTerm]]) -> t.List[ast.SyntaxTerm]:
         if children is None or children[0] is None:
             return []
-        return t.cast(t.List[SyntaxTerm], children) 
+        return t.cast(t.List[ast.SyntaxTerm], children) 
     
-    def condition(self, meta: Meta, children: t.List[SyntaxTerm]) -> ConditionalExpressionSyntax:
+    def condition(self, meta: Meta, children: t.List[ast.SyntaxTerm]) -> ast.ConditionalExpressionSyntax:
         return {
             'kind': 'If',
             'condition': children[0],
@@ -325,19 +215,19 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
     
-    def logical(self, meta: Meta, children: t.List[t.Union[SyntaxTerm, Token]]) -> BinaryExpressionSyntax:
+    def logical(self, meta: Meta, children: t.List[t.Union[ast.SyntaxTerm, Token]]) -> ast.BinaryExpressionSyntax:
         return self.__parse_binary(meta, children)
 
-    def arithmetic(self, meta: Meta, children: t.List[t.Union[SyntaxTerm, Token]]) -> BinaryExpressionSyntax:
+    def arithmetic(self, meta: Meta, children: t.List[t.Union[ast.SyntaxTerm, Token]]) -> ast.BinaryExpressionSyntax:
         return self.__parse_binary(meta, children)
     
-    def factor(self, meta: Meta, children: t.List[t.Union[SyntaxTerm, Token]]) -> BinaryExpressionSyntax:
+    def factor(self, meta: Meta, children: t.List[t.Union[ast.SyntaxTerm, Token]]) -> ast.BinaryExpressionSyntax:
         return self.__parse_binary(meta, children)
     
-    def __parse_binary(self, meta: Meta, children: t.List[t.Union[SyntaxTerm, Token]]) -> BinaryExpressionSyntax:
-        left = t.cast(SyntaxTerm, children[0])
+    def __parse_binary(self, meta: Meta, children: t.List[t.Union[ast.SyntaxTerm, Token]]) -> ast.BinaryExpressionSyntax:
+        left = t.cast(ast.SyntaxTerm, children[0])
         op = t.cast(Token, children[1])
-        right = t.cast(SyntaxTerm, children[2])
+        right = t.cast(ast.SyntaxTerm, children[2])
         return {
             'kind': 'Binary',
             'lhs': left,
@@ -351,7 +241,7 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
 
-    def var(self, meta: Meta, children: t.List[Token]) -> IdentifierSyntax:
+    def var(self, meta: Meta, children: t.List[Token]) -> ast.IdentifierSyntax:
         return {
             'kind': 'Var',
             'text': children[0].value,
@@ -363,7 +253,7 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
     
-    def tuple(self, meta: Meta, children: t.List[SyntaxTerm]) -> TupleSyntax:
+    def tuple(self, meta: Meta, children: t.List[ast.SyntaxTerm]) -> ast.TupleSyntax:
         return {
             'kind': 'Tuple',
             'first': children[0],
@@ -376,7 +266,7 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
 
-    def string(self, meta: Meta, children: t.List[Token]) -> LiteralSyntax:
+    def string(self, meta: Meta, children: t.List[Token]) -> ast.LiteralSyntax:
         return {
             'kind': 'Str',
             'value': children[0].value[1:-1],
@@ -388,7 +278,7 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
 
-    def integer(self, meta: Meta, children: t.List[Token]) -> LiteralSyntax:
+    def integer(self, meta: Meta, children: t.List[Token]) -> ast.LiteralSyntax:
         return {
             'kind': 'Int',
             'value': int(children[0].value),
@@ -400,7 +290,7 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
     
-    def true(self, meta: Meta, children: t.List[Token]) -> LiteralBooleanSyntax:
+    def true(self, meta: Meta, children: t.List[Token]) -> ast.LiteralBooleanSyntax:
         return {
             'kind': 'Bool',
             'value': True,
@@ -412,7 +302,7 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
             }
         }
 
-    def false(self, meta: Meta, children: t.List[Token]) -> LiteralBooleanSyntax:
+    def false(self, meta: Meta, children: t.List[Token]) -> ast.LiteralBooleanSyntax:
         return {
             'kind': 'Bool',
             'value': False,
@@ -427,67 +317,5 @@ class _Lark2RinhaAST(Transformer[Token, SyntaxTerm | FileSyntax]):
 
 _parser: t.Final = Lark(GRAMMAR, start='file', parser='lalr', propagate_positions=True)
 
-def parse(src: str, *, filename: str='<main>') -> FileSyntax:
-    return t.cast(FileSyntax, _Lark2RinhaAST(filename).transform(_parser.parse(src)))
-
-
-def flatten(term: SyntaxTerm, result: t.List[SyntaxTerm]) -> None:
-    """Flattens the AST into a list with topological order."""
-    match term['kind']:
-        case 'Int' | 'Str' | 'Bool' | 'Var':
-            result.append(term)
-            return
-        case 'Tuple':
-            term = t.cast(TupleSyntax, term)
-            flatten(term['first'], result)
-            flatten(term['second'], result)
-            result.append(term)
-            return
-        case 'Binary':
-            term = t.cast(BinaryExpressionSyntax, term)
-            flatten(term['lhs'], result)
-            flatten(term['rhs'], result)
-            result.append(term)
-            return
-        case 'Call':
-            term = t.cast(CallExpressionSyntax, term)
-            for arg in reversed(term['arguments']):
-                flatten(arg, result)
-            flatten(term['callee'], result)
-            result.append(term)
-            return
-        case 'Print':
-            term = t.cast(PrintSyntax, term)
-            flatten(term['value'], result)
-            result.append(term)
-            return
-        case 'First':
-            term = t.cast(FirstSyntax, term)
-            flatten(term['value'], result)
-            result.append(term)
-            return
-        case 'Second':
-            term = t.cast(SecondSyntax, term)
-            flatten(term['value'], result)
-            result.append(term)
-            return
-        case 'If':
-            term = t.cast(ConditionalExpressionSyntax, term)
-            flatten(term['condition'], result)
-            flatten(term['then'], result)
-            flatten(term['otherwise'], result)
-            result.append(term)
-            return
-        case 'Function':
-            term = t.cast(FunctionExpressionSyntax, term)
-            flatten(term['value'], result)
-            result.append(term)
-            return
-        case 'Let':
-            term = t.cast(LetExpressionSyntax, term)
-            flatten(term['value'], result)
-            flatten(term['next'], result)
-            result.append(term)
-            return
-        case _:
-            raise ValueError(f"unknown node kind '{term['kind']}'")
+def parse(src: str, *, filename: str='<main>') -> ast.FileSyntax:
+    return t.cast(ast.FileSyntax, _Lark2RinhaAST(filename).transform(_parser.parse(src)))

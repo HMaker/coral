@@ -150,5 +150,7 @@ CRObject* CRFunction_call(CRObject* self, size_t argscount, ...) {
         CR_ABORT("FATAL: CRFunction_call: function returned NULL\n");
         return NULL;
     }
+    // the callee must clean the arguments, we just clean self
+    CRObject_decref(self);
     return result;
 }

@@ -1,6 +1,6 @@
 import orjson
 import argparse
-from coral import parser, ast, compiler
+from coral import ast, compiler
 
 
 argsparser = argparse.ArgumentParser(
@@ -38,6 +38,7 @@ argsparser.add_argument(
 args = argsparser.parse_args()
 with open(args.file, 'r') as file:
     if args.parse:
+        from coral import parser
         rinha = parser.parse(file.read())
     else:
         rinha = orjson.loads(file.read())
