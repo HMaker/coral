@@ -1165,12 +1165,14 @@ class CoralFunctionType(ast.BoundFunctionType):
     def __init__(
         self,
         params: t.Sequence[ast.IBoundType],
+        param_names: t.Sequence[str],
         return_type: ast.IBoundType,
         llfunc: t.Optional[ir.Function] = None,
         has_globals: bool = False,
         name: t.Optional[str] = None
     ) -> None:
         super().__init__(params, return_type)
+        self.param_names: t.Final = param_names
         self.llfunc: t.Final = llfunc
         self.has_globals: t.Final = has_globals
         self.name: t.Final = name
@@ -1430,26 +1432,99 @@ class CoralFunctionCompilation:
         var = self.vars.get(name, None)
         if var is not None:
             return var
-        varindex = self.globals_index.get(name, None)
-        if varindex is None:
-            raise ValueError(f"the name '{name}' is not defined")
-        # globals are always boxed, but we can unbox them if we know their type
-        globalvar = CoralObject.wrap_boxed_value(
-            boundtype=varindex.type,
-            value=self.builder.load(
-                self.builder.gep(
-                    self.globals_ptr,
-                    indices=[LL_INT(varindex.index)],
-                    inbounds=False
-                )
-            ),
-            scope=self
-        )
-        if globalvar.boundtype.is_static:
-            globalvar = globalvar.unbox()
-        globalvar.value.name = name
-        self.vars[name] = globalvar
-        return globalvar
+        raise ValueError(f"the name '{name}' is not defined")
+
+    def load_params(self) -> None:
+        """Loads the arguments into the local vars list. It must be done before loading the globals."""
+        if self.boundtype.has_globals:
+            llfunc_real_params = self.boundtype.llfunc.args[1:]
+        else:
+            llfunc_real_params = self.boundtype.llfunc.args
+        for i, param in enumerate(self.boundtype.params):
+            paramvar: CoralObject
+            match param.type:
+                case ast.NativeType.INTEGER:
+                    paramvar = CoralInteger(
+                        type_=ast.BOUND_INTEGER_TYPE,
+                        lltype=LL_INT,
+                        value=llfunc_real_params[i],
+                        boxed=False,
+                        scope=self
+                    )
+                case ast.NativeType.BOOLEAN:
+                    paramvar = CoralInteger(
+                        type_=ast.BOUND_BOOLEAN_TYPE,
+                        lltype=LL_BOOL,
+                        value=llfunc_real_params[i],
+                        boxed=False,
+                        scope=self
+                    )
+                # all parameter types below are boxed
+                case ast.NativeType.STRING:
+                    paramvar = CoralString(
+                        type_=ast.BOUND_STRING_TYPE,
+                        lltype=llfunc_real_params[i].type,
+                        value=llfunc_real_params[i],
+                        boxed=True,
+                        scope=self
+                    )
+                case ast.NativeType.TUPLE:
+                    paramvar = CoralTuple(
+                        type_=param,
+                        lltype=llfunc_real_params[i].type,
+                        value=llfunc_real_params[i],
+                        boxed=True,
+                        scope=self
+                    )
+                case ast.NativeType.FUNCTION:
+                    boundfunc = t.cast(ast.BoundFunctionType, param)
+                    paramvar = CoralFunction(
+                        # we can't do static call dispatch for functions passed through parameters
+                        type_=CoralFunctionType(
+                            params=boundfunc.params,
+                            return_type=boundfunc.return_type
+                        ),
+                        lltype=llfunc_real_params[i].type,
+                        value=llfunc_real_params[i],
+                        boxed=True,
+                        scope=self
+                    )
+                case _:
+                    paramvar = CoralObject(
+                        type_=ast.BOUND_UNDEFINED_TYPE,
+                        lltype=llfunc_real_params[i].type,
+                        value=llfunc_real_params[i],
+                        boxed=True,
+                        scope=self
+                    )
+            # collect the boxed arguments as mandates the calling convention
+            if paramvar.boxed:
+                self.collect_object(paramvar)
+            if param.is_static:
+                paramvar = paramvar.unbox()
+            self.add_local_var(self.boundtype.param_names[i], paramvar)
+
+    def load_globals(self) -> None:
+        """Loads the inherited globals into the local vars list"""
+        for varindex in self.globals_index.values():
+            if varindex.name in self.vars:
+                continue
+            # globals are always boxed, but we can unbox them if we know their type
+            globalvar = CoralObject.wrap_boxed_value(
+                boundtype=varindex.type,
+                value=self.builder.load(
+                    self.builder.gep(
+                        self.globals_ptr,
+                        indices=[LL_INT(varindex.index)],
+                        inbounds=False
+                    )
+                ),
+                scope=self
+            )
+            if globalvar.boundtype.is_static:
+                globalvar = globalvar.unbox()
+            globalvar.value.name = varindex.name
+            self.vars[varindex.name] = globalvar
 
     def collect_object(self, obj: _T) -> _T:
         """Saves the given object in the garbage collection list. This method DOES NOT INCREMENT
@@ -1551,6 +1626,7 @@ class CoralCompiler:
             globals_index={},
             boundtype=CoralFunctionType(
                 params=(),
+                param_names=(),
                 return_type=ast.BOUND_UNDEFINED_TYPE,
                 llfunc=main,
                 name='__main__'
@@ -1720,6 +1796,7 @@ class CoralCompiler:
         # adapt the function type to include LLVM function
         boundtype = CoralFunctionType(
             params=boundtype.params,
+            param_names=tuple(param.name for param in node.params),
             return_type=boundtype.return_type,
             llfunc=llfunc,
             has_globals=has_globals,
@@ -1755,74 +1832,8 @@ class CoralCompiler:
             builder=child_builder,
             runtime=scope.runtime
         )
-        # set the parameters as local variables
-        if has_globals:
-            llfunc_real_params = llfunc.args[1:]
-        else:
-            llfunc_real_params = llfunc.args
-        for i, param in enumerate(node.params):
-            paramvar: CoralObject
-            match param.boundtype.type:
-                case ast.NativeType.INTEGER:
-                    paramvar = CoralInteger(
-                        type_=ast.BOUND_INTEGER_TYPE,
-                        lltype=LL_INT,
-                        value=llfunc_real_params[i],
-                        boxed=False,
-                        scope=child_scope
-                    )
-                case ast.NativeType.BOOLEAN:
-                    paramvar = CoralInteger(
-                        type_=ast.BOUND_BOOLEAN_TYPE,
-                        lltype=LL_BOOL,
-                        value=llfunc_real_params[i],
-                        boxed=False,
-                        scope=child_scope
-                    )
-                # all parameter types below are boxed
-                case ast.NativeType.STRING:
-                    paramvar = CoralString(
-                        type_=ast.BOUND_STRING_TYPE,
-                        lltype=llfunc_real_params[i].type,
-                        value=llfunc_real_params[i],
-                        boxed=True,
-                        scope=child_scope
-                    )
-                case ast.NativeType.TUPLE:
-                    paramvar = CoralTuple(
-                        type_=param.boundtype,
-                        lltype=llfunc_real_params[i].type,
-                        value=llfunc_real_params[i],
-                        boxed=True,
-                        scope=child_scope
-                    )
-                case ast.NativeType.FUNCTION:
-                    boundfunc = t.cast(ast.BoundFunctionType, param.boundtype)
-                    paramvar = CoralFunction(
-                        # we can't do static call dispatch for functions passed through parameters
-                        type_=CoralFunctionType(
-                            params=boundfunc.params,
-                            return_type=boundfunc.return_type
-                        ),
-                        lltype=llfunc_real_params[i].type,
-                        value=llfunc_real_params[i],
-                        boxed=True,
-                        scope=child_scope
-                    )
-                case _:
-                    paramvar = CoralObject(
-                        type_=ast.BOUND_UNDEFINED_TYPE,
-                        lltype=llfunc_real_params[i].type,
-                        value=llfunc_real_params[i],
-                        boxed=True,
-                        scope=child_scope
-                    )
-            # collect the boxed arguments as mandates the calling convention
-            if paramvar.boxed:
-                child_scope.collect_object(paramvar)
-            if param.boundtype.is_static:
-                paramvar = paramvar.unbox()
-            child_scope.add_local_var(param.name, paramvar)
+        child_scope.load_params()
+        child_scope.load_globals()
         self._compile_node(node.body, child_scope, is_return_branch=True)
         child_scope.handle_gc_finalization()
         scope.functions_count += 1
@@ -1852,6 +1863,7 @@ class CoralCompiler:
             globals_index={},
             boundtype=CoralFunctionType(
                 params=(),
+                param_names=(),
                 return_type=ast.BOUND_UNDEFINED_TYPE,
                 llfunc=llfunc_dynamic,
                 name=llfunc_dynamic.name
