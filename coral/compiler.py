@@ -434,7 +434,15 @@ class CoralRuntime:
                 return LL_BOOL
             case ast.NativeType.FUNCTION:
                 boundtype = t.cast(ast.BoundFunctionType, boundtype)
-                params = [self.get_llvm_type(param) for param in boundtype.params]
+                params = []
+                for param in boundtype.params:
+                    match param.type:
+                        case ast.NativeType.INTEGER:
+                            params.append(LL_INT)
+                        case ast.NativeType.BOOLEAN:
+                            params.append(LL_BOOL)
+                        case _:
+                            params.append(self.crobject_struct.as_pointer())
                 match boundtype.return_type.type:
                     case ast.NativeType.INTEGER:
                         return ir.FunctionType(args=params, return_type=LL_INT)
@@ -1303,9 +1311,11 @@ class CoralFunction(CoralObject):
             # the callee needs a new reference to all the arguments, including self
             callee = callee.box()
             callee.incref()
-            varargs = [arg.box() for arg in args]
-            for arg in varargs:
+            varargs = []
+            for arg in args:
+                arg = arg.box()
                 arg.incref()
+                varargs.append(arg.value)
             if tail:
                 scope.handle_gc_cleanup()
             return_value = CoralObject(
@@ -1329,9 +1339,11 @@ class CoralFunction(CoralObject):
         if boundtype.llfunc is None:
             callee = callee.box()
             callee.incref()
-            varargs = [arg.box() for arg in args]
-            for arg in varargs:
+            varargs = []
+            for arg in args:
+                arg = arg.box()
                 arg.incref()
+                varargs.append(arg.value)
             if tail:
                 scope.handle_gc_cleanup()
             return_value = CoralObject.wrap_boxed_value(
