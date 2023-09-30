@@ -10,4 +10,4 @@ python:
 	python ./setup.py bdist_wheel
 
 runtime:
-	C_INCLUDE_PATH=${C_INCLUDE_PATH} ${CLANG} -shared -fPIC -O3 -I./coral/runtime -o ./coral/libruntime.so ./coral/runtime/*.c
+	C_INCLUDE_PATH=${C_INCLUDE_PATH} ${CLANG} -shared -fPIC -O3 -I./coral/runtime -o ./coral/libcoral.so ./coral/runtime/*.c

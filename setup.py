@@ -7,7 +7,7 @@ with open('requirements.txt', 'r') as file:
 setup(
     name='coral',
     packages=['coral'],
-    package_data={'coral': ['libruntime.so']},
+    package_data={'coral': ['libcoral.so']},
     include_package_data=True,
     install_requires=REQUIREMENTS
 )

@@ -10,7 +10,7 @@ llvm.initialize_native_target()
 llvm.initialize_native_asmprinter()
 llvm.check_jit_execution()
 with importlib.resources.as_file(
-    importlib.resources.files('coral').joinpath('libruntime.so')
+    importlib.resources.files('coral').joinpath('libcoral.so')
 ) as runtimelib:
     llvm.load_library_permanently(str(runtimelib))
 
