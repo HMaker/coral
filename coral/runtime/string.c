@@ -62,7 +62,7 @@ CRObject* CRString_concat(CRObject* self, CRObject* other) {
             return NULL;
         }
         memcpy(result, left->value, left->length);
-        memcpy(result + left->length, right->value, right->length);
+        memcpy(result + left->length, right->value, right->length + 1);
         return CRString_new(result, true);
     }
     if (selftype == CR_STR) {
