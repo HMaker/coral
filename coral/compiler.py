@@ -552,10 +552,10 @@ class CoralObject:
         scope: 'CoralFunctionCompilation'
     ) -> 'CoralObject':
         """Merge values which came from conditional branches. Both values must have the same type."""
-        if then_value.lltype != else_value.lltype:
-            raise TypeError(f"both sides of a IF branch must have the same LLVM type, but got '{then_value.lltype}' and '{else_value.lltype}'")
         if then_value.boxed != else_value.boxed:
             raise TypeError(f"both sides of a IF branch must be either all boxed or unboxed")
+        if then_value.lltype != else_value.lltype:
+            raise TypeError(f"both sides of a IF branch must have the same LLVM type, but got '{then_value.lltype}' and '{else_value.lltype}'")
         if not then_value.boxed and then_value.boundtype != else_value.boundtype:
             raise TypeError(f"both sides of a unboxed IF branch must have the same bound type, but got '{then_value.boundtype}' and '{else_value.boundtype}'")
         result = scope.builder.phi(then_value.lltype)
@@ -567,7 +567,7 @@ class CoralObject:
             value=result,
             boxed=then_value.boxed,
             scope=scope
-        ) 
+        )
 
     def incref(self) -> None:
         if self.boxed:
@@ -1103,17 +1103,22 @@ class CoralTuple(CoralObject):
         else_value: 'CoralObject',
         else_block: ir.Block,
         scope: 'CoralFunctionCompilation'
-    ) -> 'CoralObject':
-        if (
-            boundtype.type != ast.NativeType.TUPLE or
-            then_value.boundtype.type != ast.NativeType.TUPLE or
-            else_value.boundtype.type != ast.NativeType.TUPLE
-        ):
+    ) -> CoralObject:
+        if (boundtype.type != ast.NativeType.TUPLE):
+            return CoralObject.merge_branch(
+                boundtype=boundtype,
+                then_value=then_value,
+                then_block=then_block,
+                else_value=else_value,
+                else_block=else_block,
+                scope=scope
+            )
+        if then_value.boundtype.type != ast.NativeType.TUPLE or else_value.boundtype.type != ast.NativeType.TUPLE:
             raise TypeError(f"expected both sides of the IF branch to be tuples, but got '{then_value.boundtype}' and '{else_value.boundtype}'")
-        if then_value.lltype != else_value.lltype:
-            raise TypeError(f"both sides of a IF branch must have the same LLVM type, but got '{then_value.lltype}' and '{else_value.lltype}'")
         if then_value.boxed != else_value.boxed:
             raise TypeError(f"both sides of a IF branch must be either all boxed or unboxed")
+        if then_value.lltype != else_value.lltype:
+            raise TypeError(f"both sides of a IF branch must have the same LLVM type, but got '{then_value.lltype}' and '{else_value.lltype}'")
         then_value = t.cast(CoralTuple, then_value)
         else_value = t.cast(CoralTuple, else_value)
         if not then_value.boxed:
@@ -1395,6 +1400,50 @@ class CoralFunction(CoralObject):
                 if tail:
                     return return_value
                 return scope.collect_object(return_value)
+
+    @classmethod
+    def merge_branch(
+        cls,
+        *,
+        boundtype: ast.IBoundType,
+        then_value: CoralObject,
+        then_block: ir.Block,
+        else_value: CoralObject,
+        else_block: ir.Block,
+        scope: 'CoralFunctionCompilation'
+    ) -> CoralObject:
+        if boundtype.type != ast.NativeType.FUNCTION:
+            return CoralObject.merge_branch(
+                boundtype=boundtype,
+                then_value=then_value,
+                then_block=then_block,
+                else_value=else_value,
+                else_block=else_block,
+                scope=scope
+            )
+        if then_value.boundtype.type != ast.NativeType.FUNCTION or else_value.boundtype.type != ast.NativeType.FUNCTION:
+            raise TypeError(f"expected both sides of the IF branch to be functions, but got '{then_value.boundtype}' and '{else_value.boundtype}'")
+        then_value = t.cast(CoralFunction, then_value)
+        else_value = t.cast(CoralFunction, else_value)
+        if then_value.function_type == else_value.function_type:
+            return super().merge_branch(
+                boundtype=then_value.function_type,
+                then_value=then_value,
+                then_block=then_block,
+                else_value=else_value,
+                else_block=else_block,
+                scope=scope
+            )
+        return super().merge_branch(
+            boundtype=CoralFunctionType(
+                params=boundtype.params,
+                return_type=boundtype.return_type
+            ),
+            then_value=then_value,
+            then_block=then_block,
+            else_value=else_value,
+            else_block=else_block
+        )
 
     def box(self) -> 'CoralFunction':
         if self.boxed: return self
@@ -2025,14 +2074,34 @@ class CoralCompiler:
                 if not node.boundtype.is_static:
                     otherwise = otherwise.box()
         if not is_return_branch:
-            return then.merge_branch(
-                boundtype=node.boundtype,
-                then_value=then,
-                then_block=then_block,
-                else_value=otherwise,
-                else_block=else_block,
-                scope=scope
-            )
+            match node.boundtype.type:
+                case ast.NativeType.TUPLE:
+                    return CoralTuple.merge_branch(
+                        boundtype=node.boundtype,
+                        then_value=then,
+                        then_block=then_block,
+                        else_value=otherwise,
+                        else_block=else_block,
+                        scope=scope
+                    )
+                case ast.NativeType.FUNCTION:
+                    return CoralFunction.merge_branch(
+                        boundtype=node.boundtype,
+                        then_value=then,
+                        then_block=then_block,
+                        else_value=otherwise,
+                        else_block=else_block,
+                        scope=scope
+                    )
+                case _:
+                    return CoralObject.merge_branch(
+                        boundtype=node.boundtype,
+                        then_value=then,
+                        then_block=then_block,
+                        else_value=otherwise,
+                        else_block=else_block,
+                        scope=scope
+                    )
         else:
             # we dont have any value if we are part of a return branch, the value is returned by a
             # explicit "ret" from the bottom of the AST.
