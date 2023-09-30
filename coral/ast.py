@@ -616,6 +616,9 @@ class ReferenceExpression(Expression):
         self._var.may_change(v)
         self.boundtype = self._var.type
 
+    def refresh_type(self) -> None:
+        self.boundtype = self._var.type
+
     def typecheck(self, supertype: IBoundType) -> IBoundType:
         # variables just try to embed the supertype constraint, this is how we propagate type hints
         # down the AST
@@ -978,6 +981,7 @@ class LetExpression(Expression):
         # we feed the actual binding's type as supertype of the next type checking round
         # then feed the new type back to the binding itself
         if self.binding is not None:
+            self.binding.refresh_type()
             self.binding.typecheck(self.value.typecheck(self.binding.boundtype))
         else:
             self.value.typecheck(BOUND_ANY_TYPE)
