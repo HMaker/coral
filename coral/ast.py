@@ -490,10 +490,10 @@ class TypeScope:
 
     def __init__(self, parent: t.Optional['TypeScope']) -> None:
         self.parent = parent
-        self.locals: t.Dict[str, ScopeVar] = {}
-        """ALL variables declared inside this scope, does not include any var from any parent, neither any children scopes"""
-        self.globals: t.Dict[str, GlobalVar] = {}
-        """ALL variables inherited from the immediate parent scope"""
+        self.locals: t.Final[t.Dict[str, ScopeVar]] = {}
+        """ALL variables declared inside this scope, does not include any var from any parent, neither from any children scopes"""
+        self.globals: t.Final[t.Dict[str, GlobalVar]] = {}
+        """ALL variables captured from the immediate parent scope"""
 
     def declare(self, name: str, type_: IBoundType) -> ScopeVar:
         """Declares a new var with the given name.
@@ -1132,8 +1132,9 @@ def build_typed_ast(
         case 'If':
             term = t.cast(ConditionalExpressionSyntax, term)
             cond = build_typed_ast(term['condition'], None, scope, vars)
-            then = build_typed_ast(term['then'], None, scope, vars)
-            alternate = build_typed_ast(term['otherwise'], None, scope, vars)
+            # branches create new variable scope
+            then = build_typed_ast(term['then'], None, TypeScope(scope), vars)
+            alternate = build_typed_ast(term['otherwise'], None, TypeScope(scope), vars)
             exp2 = ConditionalExpression(
                 type_=BOUND_ANY_TYPE,
                 scope=scope,

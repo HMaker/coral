@@ -396,6 +396,22 @@ class ConditionalInferenceTest(unittest.TestCase):
             ast.BOUND_INTEGER_TYPE
         )
 
+    def test_vars_scope_by_branch(self):
+        self.run_test(
+            """
+            let x = 1;
+            let _ = if (true) {
+                let x = "hello, world!";
+                x
+            } else {
+                let x = ("hello", "world!");
+                x
+            };
+            print(x)
+            """,
+            ast.BOUND_INTEGER_TYPE
+        )
+
 
 class StaticErrorTest(unittest.TestCase):
 
@@ -408,16 +424,6 @@ class StaticErrorTest(unittest.TestCase):
             """
             let x = 1;
             let x = 2;
-            x
-            """,
-            SyntaxError
-        )
-
-    def test_conditional_redeclaration(self):
-        self.run_test(
-            """
-            let x = 1;
-            let y = if (false) let x = 2; x else x;
             x
             """,
             SyntaxError

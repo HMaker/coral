@@ -1497,6 +1497,33 @@ class CoralFunction(CoralObject):
         )
 
 
+class CoralFunctionLocals:
+    """Constructs the scope chain of function local variables."""
+
+    def __init__(self, parent: t.Optional['CoralFunctionLocals']=None) -> None:
+        self.parent: t.Final = parent
+        self.locals: t.Final[t.Dict[str, CoralObject]] = {}
+
+    def declare(self, name: str, value: CoralObject) -> None:
+        if name in self.locals:
+            raise ValueError(f"the name '{name}' was already declared")
+        self.locals[name] = value
+
+    def get(self, name: str) -> CoralObject:
+        value = self.locals.get(name, None)
+        if value is not None:
+            return value
+        if self.parent is not None:
+            return self.parent.get(name)
+        raise ValueError(f"the name '{name}' is not defined")
+    
+    def tryget(self, name: str) -> t.Optional[CoralObject]:
+        value = self.locals.get(name, None)
+        if value is None and self.parent is not None:
+            return self.parent.tryget(name)
+        return value
+
+
 _T = t.TypeVar('_T', bound=CoralObject)
 class CoralFunctionCompilation:
     """Working context for single function compilation"""
@@ -1517,7 +1544,7 @@ class CoralFunctionCompilation:
         self.globals_index: t.Final = globals_index
         self.function_type: t.Final = function_type
         self.returns_boxed: t.Final = returns_boxed
-        self.vars: t.Final[t.Dict[str, CoralObject]] = {}
+        self._locals = CoralFunctionLocals()
         self.scope_path: t.Final = scope_path
         self.functions_count = functions_count
         self.builder: t.Final = builder
@@ -1535,16 +1562,36 @@ class CoralFunctionCompilation:
     def return_type(self) -> ir.Type:
         return self.function_type.llfunc.ftype.return_type
 
-    def add_local_var(self, name: str, value: CoralObject) -> None:
-        if name in self.vars:
-            raise ValueError(f"the name '{name}' was already declared")
-        self.vars[name] = value
+    def declare_var(self, name: str, value: CoralObject) -> None:
+        self._locals.declare(name, value)
 
     def get_var(self, name: str) -> CoralObject:
-        var = self.vars.get(name, None)
-        if var is not None:
-            return var
-        raise ValueError(f"the name '{name}' is not defined")
+        value = self._locals.tryget(name)
+        if value is not None:
+            return value
+        varindex = self.globals_index.get(name, None)
+        if varindex is None:
+            raise ValueError(f"the name '{name}' is not defined")
+        return CoralObject.wrap_boxed_value(
+            boundtype=varindex.type,
+            value=self.builder.load(
+                self.builder.gep(
+                    self.globals_ptr,
+                    indices=[LL_INT(varindex.index)],
+                    inbounds=False
+                )
+            ),
+            scope=self
+        )
+
+    def push_locals_scope(self) -> None:
+        """Creates a new local vars scope and sets it as the current scope"""
+        self._locals = CoralFunctionLocals(self._locals)
+
+    def pop_locals_scope(self) -> None:
+        """Restores the actual local vars scope to the previous one"""
+        if self._locals.parent is not None:
+            self._locals = self._locals.parent
 
     def load_params(self) -> None:
         """Loads the arguments into the local vars list. It must be done before loading the globals."""
@@ -1614,29 +1661,7 @@ class CoralFunctionCompilation:
                 self.collect_object(paramvar)
             if param.is_static:
                 paramvar = paramvar.unbox()
-            self.add_local_var(self.function_type.param_names[i], paramvar)
-
-    def load_globals(self) -> None:
-        """Loads the inherited globals into the local vars list"""
-        for varindex in self.globals_index.values():
-            if varindex.name in self.vars:
-                continue
-            # globals are always boxed, but we can unbox them if we know their type
-            globalvar = CoralObject.wrap_boxed_value(
-                boundtype=varindex.type,
-                value=self.builder.load(
-                    self.builder.gep(
-                        self.globals_ptr,
-                        indices=[LL_INT(varindex.index)],
-                        inbounds=False
-                    )
-                ),
-                scope=self
-            )
-            if globalvar.boundtype.is_static:
-                globalvar = globalvar.unbox()
-            globalvar.value.name = varindex.name
-            self.vars[varindex.name] = globalvar
+            self.declare_var(self.function_type.param_names[i], paramvar)
 
     def collect_object(self, obj: _T) -> _T:
         """Saves the given object in the garbage collection list. This method DOES NOT INCREMENT
@@ -1948,7 +1973,6 @@ class CoralCompiler:
             runtime=scope.runtime
         )
         child_scope.load_params()
-        child_scope.load_globals()
         self._compile_node(node.body, child_scope, is_return_branch=True)
         child_scope.handle_gc_finalization()
         scope.functions_count += 1
@@ -2077,14 +2101,18 @@ class CoralCompiler:
         with scope.builder.if_else(cond.unbox().value) as (then_branch, else_branch):
             with then_branch:
                 then_block = scope.builder._block
+                scope.push_locals_scope()
                 then = self._compile_node(node.then, scope, is_return_branch=is_return_branch)
                 if not node.boundtype.is_static:
                     then = then.box()
+                scope.pop_locals_scope()
             with else_branch:
                 else_block = scope.builder._block
+                scope.push_locals_scope()
                 otherwise = self._compile_node(node.alternate, scope, is_return_branch=is_return_branch)
                 if not node.boundtype.is_static:
                     otherwise = otherwise.box()
+                scope.pop_locals_scope()
         if not is_return_branch:
             match node.boundtype.type:
                 case ast.NativeType.TUPLE:
@@ -2136,7 +2164,7 @@ class CoralCompiler:
         if node.binding is not None:
             if node.binding.boundtype.is_static:
                 obj = obj.unbox()
-            scope.add_local_var(node.binding.name, obj)
+            scope.declare_var(node.binding.name, obj)
             obj.value.name = node.binding.name
         return self._compile_node(node.next, scope, is_return_branch=is_return_branch)
 
