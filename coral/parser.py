@@ -53,12 +53,17 @@ call: "print" "(" term ")"    -> print
 arguments: [term ("," term)*]
 
 ?var: CNAME
+
+LINE_COMMENT: /\/\/[^\n\r]*/
+BLOCK_COMMENT: /\/\*[^*]*\*\//
  
 %import common.ESCAPED_STRING
 %import common.SIGNED_NUMBER
 %import common.CNAME
 %import common.WS
 %ignore WS
+%ignore LINE_COMMENT
+%ignore BLOCK_COMMENT
 """
 
 
