@@ -1680,12 +1680,13 @@ class CoralFunctionCompilation:
             self.handle_gc_cleanup()
             self.builder.ret(result.value)
             return result
-        elif result.lltype == self.function_type.llfunc.ftype.return_type:
+        else:
+            result = result.unbox()
+            if result.lltype != self.function_type.llfunc.ftype.return_type:
+                raise TypeError(f"expected return type '{self.function_type.llfunc.ftype.return_type}', but got '{result.lltype}'")
             self.handle_gc_cleanup()
             self.builder.ret(result.value)
             return result
-        else:
-            raise TypeError(f"expected return type '{self.function_type.llfunc.ftype.return_type}', but got '{result.lltype}'")
 
     def handle_gc_cleanup(self) -> None:
         """Releases the GC list, this must be called only at the exit of the function"""
@@ -1909,7 +1910,7 @@ class CoralCompiler:
             llname = f'{scope.scope_path}.{node.binding.name}'
         else:
             myname = None
-            llname = f'{scope.scope_path}.closure.{scope.functions_count + 1}'
+            llname = f'{scope.scope_path}.{scope.functions_count + 1}'
         crobject_struct_ptr = scope.runtime.crobject_struct.as_pointer()
         boundtype = t.cast(ast.BoundFunctionType, node.boundtype)
         has_globals = len(node.scope.globals) > 0
