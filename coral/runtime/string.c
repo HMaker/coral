@@ -125,3 +125,9 @@ CRObject* CRString_repr(CRString* self) {
     memcpy(repr + (1 + self->length), "\"", 2); // copy nullbyte
     return CRString_new(repr, true);
 }
+
+
+void CRObject_assertString(CRObject* self) {
+    if (CRObject_getType(self) != CR_STR)
+        CR_ABORT("FATAL: expected str, but got %s\n", CRObject_getTypeName(self))
+}

@@ -141,6 +141,11 @@ CRObject* CRObject_mod(CRObject* self, CRObject* other) {
     return CRObject_newInt(CRObject_asInt(self) % CRObject_asInt(other));
 }
 
+void CRObject_assertInt(CRObject* self) {
+    if (CRObject_getType(self) != CR_INT)
+        CR_ABORT("FATAL: expected int, but got %s\n", CRObject_getTypeName(self))
+}
+
 CRObject* CRObject_lessThan(CRObject* self, CRObject* other) {
     return CRObject_newBool(CRObject_asInt(self) < CRObject_asInt(other));
 }
@@ -161,6 +166,11 @@ CRObject* CRObject_or(CRObject* self, CRObject* other) {
 }
 CRObject* CRObject_notEquals(CRObject* self, CRObject* other) {
     return CRObject_newBool(!CRObject_asBool(CRObject_equals(self, other)));
+}
+
+void CRObject_assertBool(CRObject* self) {
+    if (CRObject_getType(self) != CR_BOOL)
+        CR_ABORT("FATAL: expected bool, but got %s\n", CRObject_getTypeName(self))
 }
 
 

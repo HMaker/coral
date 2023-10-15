@@ -62,3 +62,9 @@ CRObject* CRTuple_repr(CRTuple* self) {
     CRObject_decref(second);
     return result;
 }
+
+
+void CRObject_assertTuple(CRObject* self) {
+    if (CRObject_getType(self) != CR_TUPLE)
+        CR_ABORT("FATAL: expected tuple, but got %s\n", CRObject_getTypeName(self))
+}

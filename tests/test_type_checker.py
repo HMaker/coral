@@ -57,7 +57,16 @@ class SimpleInferenceTest(unittest.TestCase):
     def test_integer_comparison(self):
         self.run_test(
             """
-            let x = 1 < 2 > 3 == 4 != 5;
+            let x = 1 < 2;
+            x
+            """,
+            ast.BOUND_BOOLEAN_TYPE
+        )
+
+    def test_integer_equals(self):
+        self.run_test(
+            """
+            let x = 1 == 2;
             x
             """,
             ast.BOUND_BOOLEAN_TYPE
@@ -93,7 +102,7 @@ class SimpleInferenceTest(unittest.TestCase):
     def test_string_comparison(self):
         self.run_test(
             """
-            let x = "foo" != "bar" == "baz";
+            let x = "bar" == "baz";
             x
             """,
             ast.BOUND_BOOLEAN_TYPE
@@ -110,6 +119,26 @@ class SimpleInferenceTest(unittest.TestCase):
                 (
                     ast.BOUND_INTEGER_TYPE,
                     ast.BoundType(ast.NativeType.TUPLE, (ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE))
+                )
+            )
+        )
+
+    def test_deep_tuple(self):
+        self.run_test(
+            """
+            let nil = ((0, 0), 0);
+            let cons = fn (value, next) => ((1, value), next);
+            let tuple = cons(1, cons(2, cons(3, nil)));
+            tuple
+            """,
+            ast.BoundType(
+                type_=ast.NativeType.TUPLE,
+                generics=(
+                    ast.BoundType(
+                        type_=ast.NativeType.TUPLE,
+                        generics=(ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE)
+                    ),
+                    ast.BOUND_ANY_TYPE
                 )
             )
         )
@@ -260,6 +289,214 @@ class SimpleInferenceTest(unittest.TestCase):
             print("bye")
             """,
             ast.BOUND_STRING_TYPE
+        )
+
+
+class HighOrderFunctionInferenceTest(unittest.TestCase):
+
+    def run_test(self, src: str, expect_type: ast.IBoundType):
+        program = ast.typecheck(parser.parse(src)['expression'])
+        self.assertEqual(program.boundtype, expect_type)
+
+    def test_returns_bool(self):
+        self.run_test(
+            """
+            let foo = fn (a) => {
+                if (a > 0)
+                    fn (a, b) => a && b
+                else
+                    fn (a, b) => a || b
+            };
+            foo
+            """,
+            ast.BoundFunctionType(params=(ast.BOUND_INTEGER_TYPE,), return_type=ast.BoundFunctionType(
+                params=(ast.BOUND_BOOLEAN_TYPE, ast.BOUND_BOOLEAN_TYPE),
+                return_type=ast.BOUND_BOOLEAN_TYPE
+            ))
+        )
+
+    def test_returns_int(self):
+        self.run_test(
+            """
+            let foo = fn (a) => {
+                if (a > 0)
+                    fn (a, b) => a - b
+                else
+                    fn (a, b) => a * b
+            };
+            foo
+            """,
+            ast.BoundFunctionType(params=(ast.BOUND_INTEGER_TYPE,), return_type=ast.BoundFunctionType(
+                params=(ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE),
+                return_type=ast.BOUND_INTEGER_TYPE
+            ))
+        )
+
+    def test_returns_deep_int(self):
+        self.run_test(
+            """
+            let foo = fn (a) => {
+                if (a > 0)
+                    fn (a) => {
+                        if (a < 0)
+                            fn (a, b) => a - b
+                        else
+                            fn (a, b) => a * b
+                    }
+                else
+                    fn (a) => {
+                        if (a > 0)
+                            fn (a, b) => a - b
+                        else
+                            fn (a, b) => a * b
+                    }
+            };
+            foo
+            """,
+            ast.BoundFunctionType(params=(ast.BOUND_INTEGER_TYPE,), return_type=ast.BoundFunctionType(
+                params=(ast.BOUND_INTEGER_TYPE,),
+                return_type=ast.BoundFunctionType(
+                    params=(ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE),
+                    return_type=ast.BOUND_INTEGER_TYPE
+                )
+            ))
+        )
+
+    def test_returns_string(self):
+        self.run_test(
+            """
+            let foo = fn (a) => {
+                if (a > 0)
+                    fn (name) => "Hello, " + name
+                else
+                    fn (name) => name + ", hello"
+            };
+            let _ = foo(1)("heraldo");
+            foo
+            """,
+            ast.BoundFunctionType(params=(ast.BOUND_INTEGER_TYPE,), return_type=ast.BoundFunctionType(
+                params=(ast.BOUND_STRING_TYPE,),
+                return_type=ast.BOUND_STRING_TYPE
+            ))
+        )
+
+    def test_returns_deep_string(self):
+        self.run_test(
+            """
+            let foo = fn (a) => {
+                if (a > 0)
+                    fn (a) => {
+                        if (a < 0)
+                            fn (name) => "Hello, " + name
+                        else
+                            fn (name) => name + ", hello"
+                    }
+                else
+                    fn (a) => {
+                        if (a > 0)
+                            fn (name) => "Hello, " + name
+                        else
+                            fn (name) => name + ", hello"
+                    }
+            };
+            let _ = foo(0)(1)("heraldo");
+            foo
+            """,
+            ast.BoundFunctionType(params=(ast.BOUND_INTEGER_TYPE,), return_type=ast.BoundFunctionType(
+                params=(ast.BOUND_INTEGER_TYPE,),
+                return_type=ast.BoundFunctionType(
+                    params=(ast.BOUND_STRING_TYPE,),
+                    return_type=ast.BOUND_STRING_TYPE
+                )
+            ))
+        )
+
+    def test_returns_tuple(self):
+        self.run_test(
+            """
+            let foo = fn (a) => {
+                if (a > 0)
+                    fn (a, b) => (a, b)
+                else
+                    fn (a, b) => (b, a)
+            };
+            let _ = foo(1)(1, 2);
+            foo
+            """,
+            ast.BoundFunctionType(params=(ast.BOUND_INTEGER_TYPE,), return_type=ast.BoundFunctionType(
+                params=(ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE),
+                return_type=ast.BoundType(
+                    ast.NativeType.TUPLE,
+                    (ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE)
+                )
+            ))
+        )
+
+    def test_takes_function_argument(self):
+        self.run_test(
+            """
+            let sum = fn (a, b) => a + b;
+            let apply = fn (f, a, b) => f(a, b);
+            let _ = apply(sum, 1, 2);
+            sum
+            """,
+            ast.BoundFunctionType(
+                (ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE),
+                ast.BOUND_INTEGER_TYPE
+            )
+        )
+
+    def test_map(self):
+        self.run_test(
+            """
+            let nil = ((0, 0), 0);
+            let cons = fn (value, next) => ((1, value), next);
+
+            let map = fn (list, f) => {
+                let tag  = first(first(list));
+                let val  = second(first(list));
+                let rest = second(list);
+                if (tag == 1) { // if (list is Cons)
+                    let new_val = f(val);
+                    let new_rest = map(rest, f);
+                    cons(new_val, new_rest)
+                } else {
+                    nil
+                }
+            };
+
+            let list = cons(1, cons(2, cons(3, cons(4, cons(5, cons(6, cons(7, cons(8, cons(9, cons(10, cons(11, cons(12, cons(13, cons(14, cons(15, cons(16, nil))))))))))))))));
+            let _ = map(list, fn (x) => x * 4);
+            map
+            """,
+            ast.BoundFunctionType(
+                params=(
+                    ast.BoundType(
+                        type_=ast.NativeType.TUPLE,
+                        generics=(
+                            ast.BoundType(
+                                type_=ast.NativeType.TUPLE,
+                                generics=(ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE)
+                            ),
+                            ast.BOUND_ANY_TYPE
+                        )
+                    ),
+                    ast.BoundFunctionType(
+                        params=(ast.BOUND_INTEGER_TYPE,),
+                        return_type=ast.BOUND_INTEGER_TYPE
+                    )
+                ),
+                return_type=ast.BoundType(
+                    type_=ast.NativeType.TUPLE,
+                    generics=(
+                        ast.BoundType(
+                            type_=ast.NativeType.TUPLE,
+                            generics=(ast.BOUND_INTEGER_TYPE, ast.BOUND_INTEGER_TYPE)
+                        ),
+                        ast.BOUND_UNDEFINED_TYPE
+                    )
+                )
+            )
         )
 
 
@@ -455,6 +692,78 @@ class StaticErrorTest(unittest.TestCase):
             print(_)
             """,
             ValueError
+        )
+
+    def test_bad_concatenation(self):
+        self.run_test(
+            """
+            let _ = 1 + false;
+            0
+            """,
+            TypeError
+        )
+
+    def test_bad_arithmetic(self):
+        self.run_test(
+            """
+            let _ = true - 1;
+            0
+            """,
+            TypeError
+        )
+
+    def test_bad_numeric_comparison(self):
+        self.run_test(
+            """
+            let _ = 1 < "foo";
+            0
+            """,
+            TypeError
+        )
+
+    def test_bad_equals_bool(self):
+        self.run_test(
+            """
+            let _ = true == "1";
+            0
+            """,
+            TypeError
+        )
+
+    def test_bad_equals_int(self):
+        self.run_test(
+            """
+            let _ = 1 == "1";
+            0
+            """,
+            TypeError
+        )
+
+    def test_bad_equals_str(self):
+        self.run_test(
+            """
+            let _ = "1" == 1;
+            0
+            """,
+            TypeError
+        )
+
+    def test_bad_boolean_expression(self):
+        self.run_test(
+            """
+            let _ = true && 1;
+            0
+            """,
+            TypeError
+        )
+
+    def test_bad_condition(self):
+        self.run_test(
+            """
+            let _ = if (1) true else false;
+            0
+            """,
+            TypeError
         )
 
 

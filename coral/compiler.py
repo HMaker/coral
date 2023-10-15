@@ -33,6 +33,8 @@ class CoralRuntime:
         crobject_decref: ir.Function,
         crobject_print: ir.Function,
 
+        crobject_assert_bool: ir.Function,
+        crobject_assert_int: ir.Function,
         crobject_add: ir.Function,
         crobject_sub: ir.Function,
         crobject_mul: ir.Function,
@@ -48,11 +50,13 @@ class CoralRuntime:
         crobject_or: ir.Function,
 
         crstring_new: ir.Function,
+        crobject_assert_string: ir.Function,
 
         crtuple_struct: ir.IdentifiedStructType,
         crtuple_new: ir.Function,
         crtuple_get_first: ir.Function,
         crtuple_get_second: ir.Function,
+        crobject_assert_tuple: ir.Function,
 
         crobjectarray_struct: ir.IdentifiedStructType,
         crobjectarray_new: ir.Function,
@@ -63,12 +67,15 @@ class CoralRuntime:
         crfunction_new: ir.Function,
         crfunction_set_global: ir.Function,
         crfunction_call: ir.Function,
+        crobject_assert_function: ir.Function,
     ) -> None:
         self.crobject_struct: t.Final = crobject_struct
         self.crobject_incref: t.Final = crobject_incref
         self.crobject_decref: t.Final = crobject_decref
         self.crobject_print: t.Final = crobject_print
 
+        self.crobject_assert_bool: t.Final = crobject_assert_bool
+        self.crobject_assert_int: t.Final = crobject_assert_int
         self.crobject_add: t.Final = crobject_add
         self.crobject_sub: t.Final = crobject_sub
         self.crobject_mul: t.Final = crobject_mul
@@ -84,11 +91,13 @@ class CoralRuntime:
         self.crobject_or: t.Final = crobject_or
 
         self.crstring_new: t.Final = crstring_new
+        self.crobject_assert_string: t.Final = crobject_assert_string
 
         self.crtuple_struct: t.Final = crtuple_struct
         self.crtuple_new: t.Final = crtuple_new
         self.crtuple_get_first: t.Final = crtuple_get_first
         self.crtuple_get_second: t.Final = crtuple_get_second
+        self.crobject_assert_tuple: t.Final = crobject_assert_tuple
 
         self.crobjectarray_struct: t.Final = crobjectarray_struct
         self.crobjectarray_new: t.Final = crobjectarray_new
@@ -99,6 +108,7 @@ class CoralRuntime:
         self.crfunction_new: t.Final = crfunction_new
         self.crfunction_set_global: t.Final = crfunction_set_global
         self.crfunction_call: t.Final = crfunction_call
+        self.crobject_assert_function: t.Final = crobject_assert_function
 
     @classmethod
     def import_into(cls, mod: ir.Module) -> 'CoralRuntime':
@@ -129,6 +139,22 @@ class CoralRuntime:
         )
         crobject_decref.linkage = 'external'
 
+        crobject_assert_int = ir.Function(
+            name='CRObject_assertInt',
+            module=mod,
+            ftype=ir.FunctionType(
+                return_type=ir.VoidType(),
+                args=[crobject_struct_ptr]
+            )
+        )
+        crobject_assert_bool = ir.Function(
+            name='CRObject_assertBool',
+            module=mod,
+            ftype=ir.FunctionType(
+                return_type=ir.VoidType(),
+                args=[crobject_struct_ptr]
+            )
+        )
         crobject_binary_operator_func = ir.FunctionType(
             return_type=crobject_struct_ptr,
             args=[crobject_struct_ptr, crobject_struct_ptr]
@@ -234,6 +260,14 @@ class CoralRuntime:
             )
         )
         crstring_new.linkage = 'external'
+        crobject_assert_string = ir.Function(
+            name='CRObject_assertString',
+            module=mod,
+            ftype=ir.FunctionType(
+                return_type=ir.VoidType(),
+                args=[crobject_struct_ptr]
+            )
+        )
 
         crobject_print = ir.Function(
             name='CRObject_print',
@@ -276,6 +310,14 @@ class CoralRuntime:
         )
         crtuple_get_second.linkage = 'external'
         crtuple_get_second.attributes.add('readonly')
+        crobject_assert_tuple = ir.Function(
+            name='CRObject_assertTuple',
+            module=mod,
+            ftype=ir.FunctionType(
+                return_type=ir.VoidType(),
+                args=[crobject_struct_ptr]
+            )
+        )
 
         crobjectarray_struct = mod.context.get_identified_type('struct.CRObjectArray')
         crobjectarray_struct.set_body(
@@ -349,12 +391,22 @@ class CoralRuntime:
             )
         )
         crfunction_call.linkage = 'external'
+        crobject_assert_function = ir.Function(
+            name='CRObject_assertFunction',
+            module=mod,
+            ftype=ir.FunctionType(
+                return_type=ir.VoidType(),
+                args=[crobject_struct_ptr]
+            )
+        )
 
         return CoralRuntime(
             crobject_struct=crobject_struct,
             crobject_incref=crobject_incref,
             crobject_decref=crobject_decref,
 
+            crobject_assert_int=crobject_assert_int,
+            crobject_assert_bool=crobject_assert_bool,
             crobject_add=crobject_add,
             crobject_sub=crobject_sub,
             crobject_mul=crobject_mul,
@@ -372,11 +424,13 @@ class CoralRuntime:
             crobject_print=crobject_print,
 
             crstring_new=crstring_new,
+            crobject_assert_string=crobject_assert_string,
 
             crtuple_struct=crtuple_struct,
             crtuple_new=crtuple_new,
             crtuple_get_first=crtuple_get_first,
             crtuple_get_second=crtuple_get_second,
+            crobject_assert_tuple=crobject_assert_tuple,
 
             crobjectarray_struct=crobjectarray_struct,
             crobjectarray_new=crobjectarray_new,
@@ -386,7 +440,8 @@ class CoralRuntime:
             crfunction_struct=crfunction_struct,
             crfunction_new=crfunction_new,
             crfunction_set_global=crfunction_set_global,
-            crfunction_call=crfunction_call
+            crfunction_call=crfunction_call,
+            crobject_assert_function=crobject_assert_function,
         )
 
     def get_function_globals(self, crobject: ir.Value, builder: ir.IRBuilder) -> ir.Value:
@@ -464,14 +519,22 @@ class CoralObject:
         type_: ast.IBoundType,
         lltype: ir.Type,
         value: ir.Value,
+        block: ir.Block,
         boxed: bool,
         scope: 'CoralFunctionCompilation'
     ) -> None:
         self.boundtype: t.Final = type_
+        """The higher level coral type of this object"""
         self.lltype: t.Final = lltype
+        """The low level type of this object"""
         self.value: t.Final = value
+        """The LLVM Value which represents this object"""
+        self.block: t.Final = block
+        """The LLVM IR Block where this object was created"""
         self.boxed: t.Final = boxed
+        """Whether this coral object is wrapped by a CRObject"""
         self.scope: t.Final = scope
+        """The function scope where this object was created"""
 
     def box(self) -> t.Self:
         """Creates a NEW boxed version of this object if it is UNBOXED. Returns the boxed object.
@@ -497,6 +560,7 @@ class CoralObject:
         cls,
         boundtype: ast.IBoundType,
         value: ir.Value,
+        block: ir.Block,
         scope: 'CoralFunctionCompilation'
     ) -> 'CoralObject':
         """Wraps a boxed value from memory."""
@@ -506,6 +570,7 @@ class CoralObject:
                     type_=boundtype,
                     lltype=value.type,
                     value=value,
+                    block=block,
                     boxed=True,
                     scope=scope
                 )
@@ -514,6 +579,7 @@ class CoralObject:
                     type_=boundtype,
                     lltype=value.type,
                     value=value,
+                    block=block,
                     boxed=True,
                     scope=scope
                 )
@@ -522,6 +588,7 @@ class CoralObject:
                     type_=boundtype,
                     lltype=value.type,
                     value=value,
+                    block=block,
                     boxed=True,
                     scope=scope
                 )
@@ -536,6 +603,7 @@ class CoralObject:
                     type_=boundtype,
                     lltype=value.type,
                     value=value,
+                    block=block,
                     boxed=True,
                     scope=scope
                 )
@@ -544,6 +612,7 @@ class CoralObject:
                     type_=ast.BOUND_UNDEFINED_TYPE,
                     lltype=value.type,
                     value=value,
+                    block=block,
                     boxed=True,
                     scope=scope
                 )
@@ -553,29 +622,109 @@ class CoralObject:
         cls,
         *,
         boundtype: ast.IBoundType,
-        then_value: 'CoralObject',
-        then_block: ir.Block,
-        else_value: 'CoralObject',
-        else_block: ir.Block,
+        thenobj: 'CoralObject',
+        elseobj: 'CoralObject',
         scope: 'CoralFunctionCompilation'
     ) -> 'CoralObject':
         """Merge values which came from conditional branches. Both values must have the same type."""
-        if then_value.boxed != else_value.boxed:
+        if thenobj.boxed != elseobj.boxed:
             raise TypeError(f"both sides of a IF branch must be either all boxed or unboxed")
-        if then_value.lltype != else_value.lltype:
-            raise TypeError(f"both sides of a IF branch must have the same LLVM type, but got '{then_value.lltype}' and '{else_value.lltype}'")
-        if not then_value.boxed and then_value.boundtype != else_value.boundtype:
-            raise TypeError(f"both sides of a unboxed IF branch must have the same bound type, but got '{then_value.boundtype}' and '{else_value.boundtype}'")
-        result = scope.builder.phi(then_value.lltype)
-        result.add_incoming(then_value.value, then_block)
-        result.add_incoming(else_value.value, else_block)
+        if thenobj.lltype != elseobj.lltype:
+            raise TypeError(f"both sides of a IF branch must have the same LLVM type, but got '{thenobj.lltype}' and '{elseobj.lltype}'")
+        if not thenobj.boxed and thenobj.boundtype != elseobj.boundtype:
+            raise TypeError(f"both sides of a unboxed IF branch must have the same bound type, but got '{thenobj.boundtype}' and '{elseobj.boundtype}'")
+        result = scope.builder.phi(thenobj.lltype)
+        result.add_incoming(thenobj.value, thenobj.block)
+        result.add_incoming(elseobj.value, elseobj.block)
         return cls(
             type_=boundtype,
-            lltype=then_value.lltype,
+            lltype=thenobj.lltype,
             value=result,
-            boxed=then_value.boxed,
+            block=scope.builder.block,
+            boxed=thenobj.boxed,
             scope=scope
         )
+
+    @classmethod
+    def typecheck(
+        cls,
+        scope: 'CoralFunctionCompilation',
+        obj: 'CoralObject',
+        target: ast.IBoundType
+    ) -> 'CoralObject':
+        """Adds a runtime type check to make sure the given object has the given target type.
+        Returns the casted object.
+        """
+        if not obj.boxed:
+            raise TypeError(f"can't cast unboxed object: {obj}")
+        match target.type:
+            case ast.NativeType.BOOLEAN:
+                scope.builder.call(
+                    fn=scope.runtime.crobject_assert_bool,
+                    args=[obj.value]
+                )
+                return CoralInteger(
+                    type_=ast.BOUND_BOOLEAN_TYPE,
+                    lltype=scope.runtime.crobject_struct.as_pointer(),
+                    value=obj.value,
+                    block=scope.builder.block,
+                    boxed=True,
+                    scope=scope
+                )
+            case ast.NativeType.INTEGER:
+                scope.builder.call(
+                    fn=scope.runtime.crobject_assert_int,
+                    args=[obj.value]
+                )
+                return CoralInteger(
+                    type_=ast.BOUND_INTEGER_TYPE,
+                    lltype=scope.runtime.crobject_struct.as_pointer(),
+                    value=obj.value,
+                    block=scope.builder.block,
+                    boxed=True,
+                    scope=scope
+                )
+            case ast.NativeType.STRING:
+                scope.builder.call(
+                    fn=scope.runtime.crobject_assert_string,
+                    args=[obj.value]
+                )
+                return CoralString(
+                    type_=ast.BOUND_STRING_TYPE,
+                    lltype=scope.runtime.crobject_struct.as_pointer(),
+                    value=obj.value,
+                    block=scope.builder.block,
+                    boxed=True,
+                    scope=scope
+                )
+            case ast.NativeType.TUPLE:
+                scope.builder.call(
+                    fn=scope.runtime.crobject_assert_tuple,
+                    args=[obj.value]
+                )
+                return CoralTuple(
+                    type_=ast.BOUND_TUPLE_TYPE,
+                    lltype=scope.runtime.crobject_struct.as_pointer(),
+                    value=obj.value,
+                    block=scope.builder.block,
+                    boxed=True,
+                    scope=scope
+                )
+            case ast.NativeType.FUNCTION:
+                scope.builder.call(
+                    fn=scope.runtime.crobject_assert_function,
+                    args=[obj.value]
+                )
+                return CoralFunction(
+                    type_=CoralFunctionType(params=(), return_type=ast.BOUND_UNDEFINED_TYPE),
+                    lltype=scope.runtime.crobject_struct.as_pointer(),
+                    value=obj.value,
+                    block=scope.builder.block,
+                    boxed=True,
+                    scope=scope
+                )
+            case _:
+                raise TypeError(f"can't cast to {target}")
 
     def incref(self) -> None:
         if self.boxed:
@@ -630,6 +779,7 @@ class CoralInteger(CoralObject):
             type_=self.boundtype,
             lltype=lltype,
             value=self.scope.builder.inttoptr(taggedint, lltype),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
@@ -642,6 +792,7 @@ class CoralInteger(CoralObject):
                 type_=self.boundtype,
                 lltype=LL_INT,
                 value=self.scope.builder.ashr(intptr, ir.Constant(LL_INT, 2)),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -653,6 +804,7 @@ class CoralInteger(CoralObject):
                     self.scope.builder.ashr(intptr, ir.Constant(LL_INT, 2)),
                     LL_BOOL
                 ),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -672,6 +824,7 @@ class CoralInteger(CoralObject):
                 type_=ast.BOUND_INTEGER_TYPE,
                 lltype=LL_INT,
                 value=self.scope.builder.add(self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -683,6 +836,7 @@ class CoralInteger(CoralObject):
                     fn=self.scope.runtime.crobject_add,
                     args=(self.box().value, other.box().value)
                 ),
+                block=self.scope.builder.block,
                 boxed=True,
                 scope=self.scope
             ))
@@ -694,18 +848,19 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_add,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         ))
 
     @classmethod
     def sub(cls, self: CoralObject, other: CoralObject) -> 'CoralInteger':
-        cls.assert_integer_operands(self, '-', other)
         if self.boundtype.type == ast.NativeType.INTEGER and other.boundtype.type == ast.NativeType.INTEGER:
             return CoralInteger(
                 type_=ast.BOUND_INTEGER_TYPE,
                 lltype=LL_INT,
                 value=self.scope.builder.sub(self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -716,18 +871,19 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_sub,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
 
     @classmethod
     def mul(cls, self: CoralObject, other: CoralObject) -> 'CoralInteger':
-        cls.assert_integer_operands(self, '*', other)
         if self.boundtype.type == ast.NativeType.INTEGER and other.boundtype.type == ast.NativeType.INTEGER:
             return CoralInteger(
                 type_=ast.BOUND_INTEGER_TYPE,
                 lltype=LL_INT,
                 value=self.scope.builder.mul(self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -738,18 +894,19 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_mul,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
     
     @classmethod
     def div(cls, self: CoralObject, other: CoralObject) -> 'CoralInteger':
-        cls.assert_integer_operands(self, '/', other)
         if self.boundtype.type == ast.NativeType.INTEGER and other.boundtype.type == ast.NativeType.INTEGER:
             return CoralInteger(
                 type_=ast.BOUND_INTEGER_TYPE,
                 lltype=LL_INT,
                 value=self.scope.builder.sdiv(self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -760,18 +917,19 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_div,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
     
     @classmethod
     def mod(cls, self: CoralObject, other: CoralObject) -> 'CoralInteger':
-        cls.assert_integer_operands(self, '%', other)
         if self.boundtype.type == ast.NativeType.INTEGER and other.boundtype.type == ast.NativeType.INTEGER:
             return CoralInteger(
                 type_=ast.BOUND_INTEGER_TYPE,
                 lltype=LL_INT,
                 value=self.scope.builder.srem(self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -782,18 +940,19 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_mod,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
 
     @classmethod
     def lt(cls, self: CoralObject, other: CoralObject) -> 'CoralInteger':
-        cls.assert_integer_operands(self, '<', other)
         if self.boundtype.type == ast.NativeType.INTEGER and other.boundtype.type == ast.NativeType.INTEGER:
             return CoralInteger(
                 type_=ast.BOUND_BOOLEAN_TYPE,
                 lltype=LL_BOOL,
                 value=self.scope.builder.icmp_signed('<', self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -804,18 +963,19 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_lt,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
     
     @classmethod
     def lte(cls, self: CoralObject, other: CoralObject) -> 'CoralInteger':
-        cls.assert_integer_operands(self, '<=', other)
         if self.boundtype.type == ast.NativeType.INTEGER and other.boundtype.type == ast.NativeType.INTEGER:
             return CoralInteger(
                 type_=ast.BOUND_BOOLEAN_TYPE,
                 lltype=LL_BOOL,
                 value=self.scope.builder.icmp_signed('<=', self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -826,6 +986,7 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_lte,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
@@ -838,6 +999,7 @@ class CoralInteger(CoralObject):
                 type_=ast.BOUND_BOOLEAN_TYPE,
                 lltype=LL_BOOL,
                 value=self.scope.builder.icmp_signed('>', self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -848,6 +1010,7 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_gt,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
@@ -860,6 +1023,7 @@ class CoralInteger(CoralObject):
                 type_=ast.BOUND_BOOLEAN_TYPE,
                 lltype=LL_BOOL,
                 value=self.scope.builder.icmp_signed('>=', self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -870,6 +1034,7 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_gte,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
@@ -889,6 +1054,7 @@ class CoralInteger(CoralObject):
                 type_=ast.BOUND_BOOLEAN_TYPE,
                 lltype=LL_BOOL,
                 value=self.scope.builder.icmp_signed('==', self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -899,6 +1065,7 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_equals,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
@@ -918,6 +1085,7 @@ class CoralInteger(CoralObject):
                 type_=ast.BOUND_BOOLEAN_TYPE,
                 lltype=LL_BOOL,
                 value=self.scope.builder.icmp_signed('!=', self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -928,18 +1096,19 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_notequals,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
 
     @classmethod
     def bool_and(cls, self: CoralObject, other: CoralObject) -> 'CoralInteger':
-        cls.assert_boolean_operands(self, '&&', other)
         if self.boundtype.type == ast.NativeType.BOOLEAN and other.boundtype.type == ast.NativeType.BOOLEAN:
             return CoralInteger(
                 type_=ast.BOUND_BOOLEAN_TYPE,
                 lltype=LL_BOOL,
                 value=self.scope.builder.and_(self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -950,18 +1119,19 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_and,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
 
     @classmethod
     def bool_or(cls, self: CoralObject, other: CoralObject) -> 'CoralInteger':
-        cls.assert_boolean_operands(self, '||', other)
         if self.boundtype.type == ast.NativeType.BOOLEAN and other.boundtype.type == ast.NativeType.BOOLEAN:
             return CoralInteger(
                 type_=ast.BOUND_BOOLEAN_TYPE,
                 lltype=LL_BOOL,
                 value=self.scope.builder.or_(self.unbox().value, other.unbox().value),
+                block=self.scope.builder.block,
                 boxed=False,
                 scope=self.scope
             )
@@ -972,33 +1142,10 @@ class CoralInteger(CoralObject):
                 fn=self.scope.runtime.crobject_or,
                 args=(self.box().value, other.box().value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         )
-
-    @classmethod
-    def assert_integer_operands(cls, left: CoralObject, op: str, right: CoralObject) -> None:
-        if (
-            left.boundtype.type != ast.NativeType.INTEGER and
-            left.boundtype.type != ast.NativeType.UNDEFINED and
-            left.boundtype.type != ast.NativeType.ANY and
-            right.boundtype.type != ast.NativeType.INTEGER and
-            right.boundtype.type != ast.NativeType.UNDEFINED and
-            right.boundtype.type != ast.NativeType.ANY
-        ):
-            raise TypeError(f"'{op}' cannot be applied between '{left.boundtype}' and '{right.boundtype}'")
-        
-    @classmethod
-    def assert_boolean_operands(cls, left: CoralObject, op: str, right: CoralObject) -> None:
-        if (
-            left.boundtype.type != ast.NativeType.BOOLEAN and
-            left.boundtype.type != ast.NativeType.UNDEFINED and
-            left.boundtype.type != ast.NativeType.ANY and
-            right.boundtype.type != ast.NativeType.BOOLEAN and
-            right.boundtype.type != ast.NativeType.UNDEFINED and
-            right.boundtype.type != ast.NativeType.ANY
-        ):
-            raise TypeError(f"'{op}' cannot be applied between '{left.boundtype}' and '{right.boundtype}'")
 
 
 class CoralString(CoralObject):
@@ -1013,6 +1160,7 @@ class CoralString(CoralObject):
                 fn=self.scope.runtime.crstring_new,
                 args=(value_ptr, ir.Constant(LL_INT, 0))
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope
         ))
@@ -1029,12 +1177,13 @@ class CoralTuple(CoralObject):
         type_: ast.IBoundType,
         lltype: ir.Type,
         value: ir.Value,
+        block: ir.Block,
         boxed: bool,
         scope: 'CoralFunctionCompilation',
         first: t.Optional[CoralObject] = None,
         second: t.Optional[CoralObject] = None
     ) -> None:
-        super().__init__(type_, lltype, value, boxed, scope)
+        super().__init__(type_, lltype, value, block, boxed, scope)
         if (first is None or second is None) and not boxed:
             raise ValueError("unboxed tuples must have its members defined")
         self._first: t.Final = first
@@ -1058,6 +1207,7 @@ class CoralTuple(CoralObject):
         return CoralObject.wrap_boxed_value(
             boundtype=self.boundtype.generics[0],
             value=self.scope.runtime.get_tuple_first(self.value, self.scope.builder),
+            block=self.scope.builder.block,
             scope=self.scope
         )
 
@@ -1067,6 +1217,7 @@ class CoralTuple(CoralObject):
         return CoralObject.wrap_boxed_value(
             boundtype=self.boundtype.generics[1],
             value=self.scope.runtime.get_tuple_second(self.value, self.scope.builder),
+            block=self.scope.builder.block,
             scope=self.scope
         )
 
@@ -1081,6 +1232,7 @@ class CoralTuple(CoralObject):
                 fn=self.scope.runtime.crtuple_new,
                 args=(first.value, second.value)
             ),
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope,
             first=None,
@@ -1097,6 +1249,7 @@ class CoralTuple(CoralObject):
             first=first,
             second=second,
             boxed=False,
+            block=self.scope.builder.block,
             scope=self.scope,
             value=ir.Constant(LL_CHAR, 0) # not used
         )
@@ -1106,42 +1259,37 @@ class CoralTuple(CoralObject):
         cls,
         *,
         boundtype: ast.IBoundType,
-        then_value: 'CoralObject',
-        then_block: ir.Block,
-        else_value: 'CoralObject',
-        else_block: ir.Block,
+        thenobj: 'CoralObject',
+        elseobj: 'CoralObject',
         scope: 'CoralFunctionCompilation'
     ) -> CoralObject:
         if (boundtype.type != ast.NativeType.TUPLE):
             return CoralObject.merge_branch(
                 boundtype=boundtype,
-                then_value=then_value,
-                then_block=then_block,
-                else_value=else_value,
-                else_block=else_block,
+                thenobj=thenobj,
+                elseobj=elseobj,
                 scope=scope
             )
-        if then_value.boundtype.type != ast.NativeType.TUPLE or else_value.boundtype.type != ast.NativeType.TUPLE:
-            raise TypeError(f"expected both sides of the IF branch to be tuples, but got '{then_value.boundtype}' and '{else_value.boundtype}'")
-        if then_value.boxed != else_value.boxed:
+        if thenobj.boxed != elseobj.boxed:
             raise TypeError(f"both sides of a IF branch must be either all boxed or unboxed")
-        if then_value.lltype != else_value.lltype:
-            raise TypeError(f"both sides of a IF branch must have the same LLVM type, but got '{then_value.lltype}' and '{else_value.lltype}'")
-        then_value = t.cast(CoralTuple, then_value)
-        else_value = t.cast(CoralTuple, else_value)
-        if not then_value.boxed:
-            first = then_value.ensure_first.merge_branch(
-                then_value=then_value.ensure_first,
-                then_block=then_block,
-                else_value=else_value.ensure_first,
-                else_block=else_block,
+        if thenobj.lltype != elseobj.lltype:
+            raise TypeError(f"both sides of a IF branch must have the same LLVM type, but got '{thenobj.lltype}' and '{elseobj.lltype}'")
+        if thenobj.boundtype != elseobj.boundtype:
+            raise TypeError(f"expected both sides of the IF branch to be tuples with same elements, but got '{thenobj.boundtype}' and '{elseobj.boundtype}'")
+        thenobj = t.cast(CoralTuple, thenobj)
+        elseobj = t.cast(CoralTuple, elseobj)
+        if not thenobj.boxed:
+            current_block = scope.builder.block
+            first = thenobj.ensure_first.merge_branch(
+                boundtype=thenobj.boundtype.generics[0],
+                thenobj=thenobj.ensure_first,
+                elseobj=elseobj.ensure_first,
                 scope=scope
             )
-            second = then_value.ensure_second.merge_branch(
-                then_value=then_value.ensure_second,
-                then_block=then_block,
-                else_value=else_value.ensure_second,
-                else_block=else_block,
+            second = thenobj.ensure_second.merge_branch(
+                boundtype=thenobj.boundtype.generics[1],
+                thenobj=thenobj.ensure_second,
+                elseobj=elseobj.ensure_second,
                 scope=scope
             )
             return cls(
@@ -1151,15 +1299,14 @@ class CoralTuple(CoralObject):
                 second=second,
                 boxed=False,
                 scope=scope,
+                block=current_block,
                 value=ir.Constant(LL_CHAR, 0) # not used
             ) 
         else:
             return super().merge_branch(
                 boundtype=boundtype,
-                then_value=then_value,
-                then_block=then_block,
-                else_value=else_value,
-                else_block=else_block,
+                thenobj=thenobj,
+                elseobj=elseobj,
                 scope=scope
             )
 
@@ -1172,6 +1319,7 @@ class CoralTuple(CoralObject):
             second=second,
             boxed=False,
             scope=scope,
+            block=scope.builder.block,
             value=ir.Constant(LL_CHAR, 0) # not used
         )
 
@@ -1180,8 +1328,6 @@ class CoralTuple(CoralObject):
         if value.boundtype.type == ast.NativeType.TUPLE:
             value = t.cast(CoralTuple, value)
             return value.instance_get_first()
-        if value.boundtype.type != ast.NativeType.UNDEFINED and value.boundtype.type != ast.NativeType.ANY:
-            raise TypeError(f"CoralTuple.get_first() expects a Tuple or UNDEFINED, but got {value.boundtype}")
         return CoralObject(
             type_=ast.BOUND_UNDEFINED_TYPE,
             lltype=value.scope.runtime.crtuple_get_first.ftype.return_type,
@@ -1189,6 +1335,7 @@ class CoralTuple(CoralObject):
                 fn=value.scope.runtime.crtuple_get_first,
                 args=(value.box().value,)
             ),
+            block=value.scope.builder.block,
             boxed=True,
             scope=value.scope
         )
@@ -1198,8 +1345,6 @@ class CoralTuple(CoralObject):
         if value.boundtype.type == ast.NativeType.TUPLE:
             value = t.cast(CoralTuple, value)
             return value.instance_get_second()
-        if value.boundtype.type != ast.NativeType.UNDEFINED and value.boundtype.type != ast.NativeType.ANY:
-            raise TypeError(f"CoralTuple.get_second() expects a Tuple or UNDEFINED, but got {value.boundtype}")
         return CoralObject(
             type_=ast.BOUND_UNDEFINED_TYPE,
             lltype=value.scope.runtime.crtuple_get_second.ftype.return_type,
@@ -1207,6 +1352,7 @@ class CoralTuple(CoralObject):
                 fn=value.scope.runtime.crtuple_get_second,
                 args=(value.box().value,)
             ),
+            block=value.scope.builder.block,
             boxed=True,
             scope=value.scope
         )
@@ -1287,11 +1433,12 @@ class CoralFunction(CoralObject):
         type_: CoralFunctionType,
         lltype: ir.FunctionType,
         value: ir.Value,
+        block: ir.Block,
         boxed: bool,
         scope: 'CoralFunctionCompilation',
         globals_ptr: t.Optional[ir.Value] = None
     ) -> None:
-        super().__init__(type_, lltype, value, boxed, scope)
+        super().__init__(type_, lltype, value, block, boxed, scope)
         self.globals_ptr: t.Final = globals_ptr
 
     @property
@@ -1327,6 +1474,7 @@ class CoralFunction(CoralObject):
                     args=[callee.value, LL_INT(len(args))] + varargs,
                     tail='musttail' if tail else False
                 ),
+                block=scope.builder.block,
                 boxed=True,
                 scope=scope
             )
@@ -1354,6 +1502,7 @@ class CoralFunction(CoralObject):
                     args=[callee.value, LL_INT(len(args))] + varargs,
                     tail='musttail' if tail else False
                 ),
+                block=scope.builder.block,
                 scope=scope
             )
             if tail:
@@ -1391,6 +1540,7 @@ class CoralFunction(CoralObject):
                     type_=boundtype.return_type,
                     lltype=LL_INT,
                     value=raw_return_value,
+                    block=scope.builder.block,
                     boxed=False,
                     scope=scope
                 )
@@ -1399,6 +1549,7 @@ class CoralFunction(CoralObject):
                     type_=boundtype.return_type,
                     lltype=LL_BOOL,
                     value=raw_return_value,
+                    block=scope.builder.block,
                     boxed=False,
                     scope=scope
                 )
@@ -1407,6 +1558,7 @@ class CoralFunction(CoralObject):
                 return_value = CoralObject.wrap_boxed_value(
                     boundtype=boundtype.return_type,
                     value=raw_return_value,
+                    block=scope.builder.block,
                     scope=scope
                 )
                 if tail:
@@ -1418,32 +1570,26 @@ class CoralFunction(CoralObject):
         cls,
         *,
         boundtype: ast.IBoundType,
-        then_value: CoralObject,
-        then_block: ir.Block,
-        else_value: CoralObject,
-        else_block: ir.Block,
+        thenobj: CoralObject,
+        elseobj: CoralObject,
         scope: 'CoralFunctionCompilation'
     ) -> CoralObject:
         if boundtype.type != ast.NativeType.FUNCTION:
             return CoralObject.merge_branch(
                 boundtype=boundtype,
-                then_value=then_value,
-                then_block=then_block,
-                else_value=else_value,
-                else_block=else_block,
+                thenobj=thenobj,
+                elseobj=elseobj,
                 scope=scope
             )
-        if then_value.boundtype.type != ast.NativeType.FUNCTION or else_value.boundtype.type != ast.NativeType.FUNCTION:
-            raise TypeError(f"expected both sides of the IF branch to be functions, but got '{then_value.boundtype}' and '{else_value.boundtype}'")
-        then_value = t.cast(CoralFunction, then_value)
-        else_value = t.cast(CoralFunction, else_value)
-        if then_value.function_type == else_value.function_type:
+        if thenobj.boundtype.type != ast.NativeType.FUNCTION or elseobj.boundtype.type != ast.NativeType.FUNCTION:
+            raise TypeError(f"expected both sides of the IF branch to be functions, but got '{thenobj.boundtype}' and '{elseobj.boundtype}'")
+        thenobj = t.cast(CoralFunction, thenobj)
+        elseobj = t.cast(CoralFunction, elseobj)
+        if thenobj.function_type == elseobj.function_type:
             return super().merge_branch(
-                boundtype=then_value.function_type,
-                then_value=then_value,
-                then_block=then_block,
-                else_value=else_value,
-                else_block=else_block,
+                boundtype=thenobj.function_type,
+                thenobj=thenobj,
+                elseobj=elseobj,
                 scope=scope
             )
         return super().merge_branch(
@@ -1451,10 +1597,8 @@ class CoralFunction(CoralObject):
                 params=boundtype.params,
                 return_type=boundtype.return_type
             ),
-            then_value=then_value,
-            then_block=then_block,
-            else_value=else_value,
-            else_block=else_block
+            thenobj=thenobj,
+            elseobj=elseobj
         )
 
     def box(self) -> 'CoralFunction':
@@ -1463,6 +1607,7 @@ class CoralFunction(CoralObject):
             type_=self.function_type,
             lltype=self.scope.runtime.crobject_struct.as_pointer(),
             value=self.value,
+            block=self.scope.builder.block,
             boxed=True,
             scope=self.scope,
             globals_ptr=None
@@ -1471,6 +1616,7 @@ class CoralFunction(CoralObject):
     def unbox(self) -> 'CoralFunction':
         if not self.boxed: return self
         # we need the globals ptr only if we can do static call dispatch
+        current_block = self.scope.builder.block
         boundtype = self.function_type
         if boundtype.llfunc is not None and boundtype.has_globals:
             globals_ptr = self.scope.runtime.get_function_globals(self.value, self.scope.builder)
@@ -1480,6 +1626,7 @@ class CoralFunction(CoralObject):
             type_=boundtype,
             lltype=self.value.type,
             value=self.value,
+            block=current_block,
             boxed=False,
             scope=self.scope,
             globals_ptr=globals_ptr
@@ -1581,6 +1728,7 @@ class CoralFunctionCompilation:
                     inbounds=False
                 )
             ),
+            block=self.builder.block,
             scope=self
         )
 
@@ -1607,6 +1755,7 @@ class CoralFunctionCompilation:
                         type_=ast.BOUND_INTEGER_TYPE,
                         lltype=LL_INT,
                         value=llfunc_real_params[i],
+                        block=self.builder.block,
                         boxed=False,
                         scope=self
                     )
@@ -1615,6 +1764,7 @@ class CoralFunctionCompilation:
                         type_=ast.BOUND_BOOLEAN_TYPE,
                         lltype=LL_BOOL,
                         value=llfunc_real_params[i],
+                        block=self.builder.block,
                         boxed=False,
                         scope=self
                     )
@@ -1624,6 +1774,7 @@ class CoralFunctionCompilation:
                         type_=ast.BOUND_STRING_TYPE,
                         lltype=llfunc_real_params[i].type,
                         value=llfunc_real_params[i],
+                        block=self.builder.block,
                         boxed=True,
                         scope=self
                     )
@@ -1632,6 +1783,7 @@ class CoralFunctionCompilation:
                         type_=param,
                         lltype=llfunc_real_params[i].type,
                         value=llfunc_real_params[i],
+                        block=self.builder.block,
                         boxed=True,
                         scope=self
                     )
@@ -1645,6 +1797,7 @@ class CoralFunctionCompilation:
                         ),
                         lltype=llfunc_real_params[i].type,
                         value=llfunc_real_params[i],
+                        block=self.builder.block,
                         boxed=True,
                         scope=self
                     )
@@ -1653,6 +1806,7 @@ class CoralFunctionCompilation:
                         type_=ast.BOUND_UNDEFINED_TYPE,
                         lltype=llfunc_real_params[i].type,
                         value=llfunc_real_params[i],
+                        block=self.builder.block,
                         boxed=True,
                         scope=self
                     )
@@ -1802,6 +1956,7 @@ class CoralCompiler:
                     type_=ast.BOUND_INTEGER_TYPE,
                     lltype=LL_INT,
                     value=LL_INT(value),
+                    block=scope.builder.block,
                     boxed=False,
                     scope=scope
                 )
@@ -1813,6 +1968,7 @@ class CoralCompiler:
                     type_=ast.BOUND_BOOLEAN_TYPE,
                     lltype=LL_BOOL,
                     value=ir.Constant(LL_BOOL, int(value)),
+                    block=scope.builder.block,
                     boxed=False,
                     scope=scope
                 )
@@ -1827,6 +1983,7 @@ class CoralCompiler:
                     lltype=LL_CHAR.as_pointer(),
                     # drop the array pointer, we just need a plain char* like pointer
                     value=scope.builder.bitcast(compiledstr, LL_CHAR.as_pointer()),
+                    block=scope.builder.block,
                     boxed=False,
                     scope=scope
                 ).box()
@@ -1841,6 +1998,15 @@ class CoralCompiler:
                 )
                 if not node.boundtype.is_static:
                     obj = obj.box()
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
+            case ast.TypeCheckExpression(value=value):
+                obj = CoralObject.typecheck(
+                    scope,
+                    self._compile_node(value, scope, is_return_branch=False),
+                    node.boundtype
+                )
                 if is_return_branch:
                     return scope.handle_return_with_value(obj)
                 return obj
@@ -1861,8 +2027,28 @@ class CoralCompiler:
                 if is_return_branch:
                     return scope.handle_return_with_value(obj)
                 return obj
-            case ast.BinaryExpression():
-                obj = self._compile_binary_expression(node, scope)
+            case ast.ConcatenateExpression():
+                obj = self._compile_concatenate_exp(node, scope)
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
+            case ast.ArithmeticExpression():
+                obj = self._compile_arithmetic_exp(node, scope)
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
+            case ast.NumericComparisonExpression():
+                obj = self._compile_numeric_comparison_exp(node, scope)
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
+            case ast.EqualsExpression():
+                obj = self._compile_equals_exp(node, scope)
+                if is_return_branch:
+                    return scope.handle_return_with_value(obj)
+                return obj
+            case ast.BooleanExpression():
+                obj = self._compile_boolean_exp(node, scope)
                 if is_return_branch:
                     return scope.handle_return_with_value(obj)
                 return obj
@@ -2029,6 +2215,7 @@ class CoralCompiler:
                     type_=param.boundtype,
                     lltype=LL_INT,
                     value=vararg_arg,
+                    block=dynamic_builder.block,
                     boxed=True,
                     scope=dynamic_scope
                 ).unbox().value)
@@ -2043,6 +2230,7 @@ class CoralCompiler:
                     type_=ast.BOUND_INTEGER_TYPE,
                     lltype=LL_INT,
                     value=dynamic_builder.call(fn=llfunc, args=dynamic_wrapper_forward),
+                    block=dynamic_builder.block,
                     boxed=False,
                     scope=dynamic_scope
                 ).box().value)
@@ -2051,6 +2239,7 @@ class CoralCompiler:
                     type_=ast.BOUND_BOOLEAN_TYPE,
                     lltype=LL_BOOL,
                     value=dynamic_builder.call(fn=llfunc, args=dynamic_wrapper_forward),
+                    block=dynamic_builder.block,
                     boxed=False,
                     scope=dynamic_scope
                 ).box().value)
@@ -2088,6 +2277,7 @@ class CoralCompiler:
             type_=boundtype,
             lltype=llfunc_type,
             value=coral_llfunc,
+            block=scope.builder.block,
             boxed=True,
             scope=scope
         ))
@@ -2101,14 +2291,12 @@ class CoralCompiler:
         cond = self._compile_node(node.cond, scope, is_return_branch=False)
         with scope.builder.if_else(cond.unbox().value) as (then_branch, else_branch):
             with then_branch:
-                then_block = scope.builder._block
                 scope.push_locals_scope()
                 then = self._compile_node(node.then, scope, is_return_branch=is_return_branch)
                 if not node.boundtype.is_static:
                     then = then.box()
                 scope.pop_locals_scope()
             with else_branch:
-                else_block = scope.builder._block
                 scope.push_locals_scope()
                 otherwise = self._compile_node(node.alternate, scope, is_return_branch=is_return_branch)
                 if not node.boundtype.is_static:
@@ -2116,31 +2304,39 @@ class CoralCompiler:
                 scope.pop_locals_scope()
         if not is_return_branch:
             match node.boundtype.type:
+                case ast.NativeType.BOOLEAN | ast.NativeType.INTEGER:
+                    return CoralInteger.merge_branch(
+                        boundtype=node.boundtype,
+                        thenobj=then,
+                        elseobj=otherwise,
+                        scope=scope
+                    )
+                case ast.NativeType.STRING:
+                    return CoralString.merge_branch(
+                        boundtype=node.boundtype,
+                        thenobj=then,
+                        elseobj=otherwise,
+                        scope=scope
+                    )
                 case ast.NativeType.TUPLE:
                     return CoralTuple.merge_branch(
                         boundtype=node.boundtype,
-                        then_value=then,
-                        then_block=then_block,
-                        else_value=otherwise,
-                        else_block=else_block,
+                        thenobj=then,
+                        elseobj=otherwise,
                         scope=scope
                     )
                 case ast.NativeType.FUNCTION:
                     return CoralFunction.merge_branch(
                         boundtype=node.boundtype,
-                        then_value=then,
-                        then_block=then_block,
-                        else_value=otherwise,
-                        else_block=else_block,
+                        thenobj=then,
+                        elseobj=otherwise,
                         scope=scope
                     )
                 case _:
                     return CoralObject.merge_branch(
                         boundtype=node.boundtype,
-                        then_value=then,
-                        then_block=then_block,
-                        else_value=otherwise,
-                        else_block=else_block,
+                        thenobj=then,
+                        elseobj=otherwise,
                         scope=scope
                     )
         else:
@@ -2151,6 +2347,7 @@ class CoralCompiler:
                 type_=ast.BOUND_UNDEFINED_TYPE,
                 lltype=scope.runtime.crobject_struct.as_pointer(),
                 value=scope.runtime.crobject_struct.as_pointer()(0),
+                block=scope.builder.block,
                 boxed=True,
                 scope=scope
             )
@@ -2169,12 +2366,15 @@ class CoralCompiler:
             obj.value.name = node.binding.name
         return self._compile_node(node.next, scope, is_return_branch=is_return_branch)
 
-    def _compile_binary_expression(self, node: ast.BinaryExpression, scope: CoralFunctionCompilation) -> CoralObject:
+    def _compile_concatenate_exp(self, node: ast.ConcatenateExpression, scope: CoralFunctionCompilation) -> CoralObject:
+        left = self._compile_node(node.left, scope, is_return_branch=False)
+        right = self._compile_node(node.right, scope, is_return_branch=False)
+        return CoralInteger.add(left, right)
+
+    def _compile_arithmetic_exp(self, node: ast.ArithmeticExpression, scope: CoralFunctionCompilation) -> CoralObject:
         left = self._compile_node(node.left, scope, is_return_branch=False)
         right = self._compile_node(node.right, scope, is_return_branch=False)
         match node.op:
-            case ast.BinaryOperator.ADD:
-                return CoralInteger.add(left, right)
             case ast.BinaryOperator.SUB:
                 return CoralInteger.sub(left, right)
             case ast.BinaryOperator.MUL:
@@ -2183,6 +2383,13 @@ class CoralCompiler:
                 return CoralInteger.div(left, right)
             case ast.BinaryOperator.MOD:
                 return CoralInteger.mod(left, right)
+            case _:
+                raise ValueError(f"unknown arithmetic operator: {node.op}")
+
+    def _compile_numeric_comparison_exp(self, node: ast.NumericComparisonExpression, scope: CoralFunctionCompilation) -> CoralObject:
+        left = self._compile_node(node.left, scope, is_return_branch=False)
+        right = self._compile_node(node.right, scope, is_return_branch=False)
+        match node.op:
             case ast.BinaryOperator.LTE:
                 return CoralInteger.lte(left, right)
             case ast.BinaryOperator.LT:
@@ -2191,15 +2398,31 @@ class CoralCompiler:
                 return CoralInteger.gt(left, right)
             case ast.BinaryOperator.GTE:
                 return CoralInteger.gte(left, right)
+            case _:
+                raise ValueError(f"unknown numeric comparison operator: {node.op}")
+    
+    def _compile_equals_exp(self, node: ast.EqualsExpression, scope: CoralFunctionCompilation) -> CoralObject:
+        left = self._compile_node(node.left, scope, is_return_branch=False)
+        right = self._compile_node(node.right, scope, is_return_branch=False)
+        match node.op:
             case ast.BinaryOperator.EQ:
                 return CoralInteger.equals(left, right)
             case ast.BinaryOperator.NEQ:
                 return CoralInteger.not_equals(left, right)
+            case _:
+                raise ValueError(f"unknown equals operator: {node.op}")
+            
+    def _compile_boolean_exp(self, node: ast.BooleanExpression, scope: CoralFunctionCompilation) -> CoralObject:
+        left = self._compile_node(node.left, scope, is_return_branch=False)
+        right = self._compile_node(node.right, scope, is_return_branch=False)
+        match node.op:
             case ast.BinaryOperator.AND:
                 return CoralInteger.bool_and(left, right)
             case ast.BinaryOperator.OR:
                 return CoralInteger.bool_or(left, right)
-            
+            case _:
+                raise ValueError(f"unknown boolean operator: {node.op}")
+
     def _compile_raw_string(self, value: str) -> ir.GlobalVariable:
         """Creates a global constant for the given Python string if it doesn't exist.
         Only ASCII strings are supported. All strings will be null-byte terminated.

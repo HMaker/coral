@@ -169,10 +169,11 @@ class IBoundType:
         """
         raise NotImplementedError
 
-    def lowers(self, other: 'IBoundType') -> bool:
-        """Returns True if this type is more specialized than the given type, False otherwise"""
-        raise NotImplementedError
-    
+    def lowers_any(self, other: 'IBoundType') -> bool:
+        """Returns True if this type is more specialized than the given type (including UNDEFINED), False otherwise"""
+        lower = self.lower(other)
+        return lower.type != NativeType.ANY
+
     def __eq__(self, __value: object) -> bool:
         raise NotImplementedError
     
@@ -232,6 +233,8 @@ class BoundType(IBoundType):
             return other
         if other.type == NativeType.ANY:
             return self
+        if other.type == NativeType.UNION:
+            return other.lower(self)
         if other.type != self._native_type:
             return BoundType(NativeType.UNDEFINED, ())
         other = t.cast(BoundType, other)
@@ -243,13 +246,6 @@ class BoundType(IBoundType):
         return BoundType(
             self._native_type,
             tuple(myg.lower(other_generics[i]) for i, myg in enumerate(self._generics))
-        )
-    
-    def lowers(self, other: IBoundType) -> bool:
-        lower = self.lower(other)
-        return (
-            lower.type != NativeType.ANY and
-            all(generic.type != NativeType.ANY for generic in lower.generics)
         )
     
     def __eq__(self, o: object) -> bool:
@@ -338,10 +334,6 @@ class BoundTypeUnion(IBoundType):
                 return BoundType(NativeType.UNDEFINED, ())
             return my_member2.lower(other)
 
-    def lowers(self, other: IBoundType) -> bool:
-        lower = self.lower(other)
-        return lower.type != NativeType.ANY
-
     def __eq__(self, o: object) -> bool:
         return isinstance(o, BoundTypeUnion) and self._members == o.members
 
@@ -404,6 +396,8 @@ class BoundFunctionType(IBoundType):
             return other
         if other.type == NativeType.ANY:
             return self
+        if other.type == NativeType.UNION:
+            return other.lower(self)
         if other.type != NativeType.FUNCTION:
             return BoundType(NativeType.UNDEFINED, ())
         other = t.cast(BoundFunctionType, other)
@@ -415,10 +409,10 @@ class BoundFunctionType(IBoundType):
             self._return_type.lower(other.return_type)
         )
 
-    def lowers(self, other: IBoundType) -> bool:
+    def lowers_any(self, other: IBoundType) -> bool:
         lower = self.lower(other)
-        if lower.type != NativeType.FUNCTION:
-            return False
+        if lower.type == NativeType.UNDEFINED:
+            return True
         lower = t.cast(BoundFunctionType, lower)
         return (
             lower.return_type.type != NativeType.ANY and
@@ -488,9 +482,9 @@ class GlobalVar:
     def __hash__(self) -> int:
         return hash(self.var)
 
-class TypeScope:
+class Scope:
 
-    def __init__(self, parent: t.Optional['TypeScope']) -> None:
+    def __init__(self, parent: t.Optional['Scope']) -> None:
         self.parent = parent
         self.locals: t.Final[t.Dict[str, ScopeVar]] = {}
         """ALL variables declared inside this scope, does not include any var from any parent, neither from any children scopes"""
@@ -522,24 +516,88 @@ class TypeScope:
         raise ValueError(f"Identifier '{name}' is not defined")
 
 
+class SourceCodeLocation:
+
+    def __init__(self, file: str, line: str, column: int):
+        self.file: t.Final = file
+        self.line: t.Final = line
+        self.column: t.Final = column
+
+    def __str__(self) -> str:
+        return f'{self.file}:{self.line}:{self.column}'
+    
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}(file={repr(self.file)}, line={repr(self.line)}, column={repr(self.column)})'
+
+
 class Expression:
     """Root node of the typed AST."""
 
-    def __init__(self, type_: IBoundType, scope: TypeScope, parent: t.Optional['Expression']=None) -> None:
+    def __init__(
+        self,
+        type_: IBoundType,
+        scope: Scope,
+        location: SourceCodeLocation,
+        parent: t.Optional['Expression']=None
+    ) -> None:
         self.boundtype: IBoundType = type_
         self.parent = parent
         self.scope: t.Final = scope
+        self.location = location
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
-        """Performs a type inference round.
+        """Runs a new type inference round.
         
         The "supertype" is a constraint over the type of the expression evaluation result from this
         node. Either it's a sub type of the given supertype or UNDEFINED. The result is returned.
         """
         raise NotImplementedError
-    
+
+    def try_infertype(self, supertype: IBoundType) -> IBoundType:
+        """Runs a new type inference round, but the type of this node is updated only if the given
+        supertype lowers it. See `infertype()`.
+        """
+        lower = supertype.lower(self.boundtype)
+        if (
+            lower.type != NativeType.ANY and
+            lower.type != NativeType.UNDEFINED and
+            all(
+                generic.type != NativeType.ANY and generic.type != NativeType.UNDEFINED
+                for generic in lower.generics
+            )
+        ):
+            return self.infertype(supertype)
+        return self.boundtype
+
     def handle_partial_inference(self, type_: IBoundType) -> None:
         """Called from the children AST nodes to inform of partial results from a infertype call to them"""
+        pass
+
+    def typecheck(self) -> None:
+        """Validates the expression types. Raises TypeError for semantic errors which can be found
+        at compile-time. Inserts proper TypeCheckExpression to typecheck at runtime. It must be
+        done after type inference.
+        """
+        raise NotImplementedError
+    
+
+class TypeCheckExpression(Expression):
+
+    def __init__(
+        self,
+        type_: IBoundType,
+        scope: Scope,
+        location: SourceCodeLocation,
+        value: Expression,
+        parent: Expression | None = None
+    ) -> None:
+        super().__init__(type_, scope, location, parent)
+        self.value = value
+
+    def infertype(self, supertype: IBoundType) -> IBoundType:
+        return supertype.lower(self.boundtype)
+    
+    def typecheck(self) -> None:
         pass
 
 
@@ -549,15 +607,19 @@ class LiteralBooleanValue(Expression):
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
         parent: t.Optional['Expression'],
+        location: SourceCodeLocation,
         value: bool
     ) -> None:
-        super().__init__(type_, scope, parent)
+        super().__init__(type_, scope, location, parent)
         self.value = value
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
         return supertype.lower(BOUND_BOOLEAN_TYPE)
+    
+    def typecheck(self) -> None:
+        pass
     
 class LiteralIntegerValue(Expression):
 
@@ -565,15 +627,19 @@ class LiteralIntegerValue(Expression):
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         value: int
     ) -> None:
-        super().__init__(type_, scope, parent)
+        super().__init__(type_, scope, location, parent)
         self.value = value
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
         return supertype.lower(BOUND_INTEGER_TYPE)
+    
+    def typecheck(self) -> None:
+        pass
     
 class LiteralStringValue(Expression):
 
@@ -581,15 +647,19 @@ class LiteralStringValue(Expression):
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         value: str
     ) -> None:
-        super().__init__(type_, scope, parent)
+        super().__init__(type_, scope, location, parent)
         self.value = value
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
         return supertype.lower(BOUND_STRING_TYPE)
+    
+    def typecheck(self) -> None:
+        pass
 
 
 class ReferenceExpression(Expression):
@@ -599,11 +669,12 @@ class ReferenceExpression(Expression):
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         var: ScopeVar
     ) -> None:
-        super().__init__(type_, scope, parent)
+        super().__init__(type_, scope, location, parent)
         self._var = var
 
     @property
@@ -620,8 +691,11 @@ class ReferenceExpression(Expression):
     def infertype(self, supertype: IBoundType) -> IBoundType:
         # variables just try to embed the supertype constraint, this is how we propagate type hints
         # down the AST
-        self.update_type(supertype.lower(self._var.type))
+        self.update_type(self._var.type.lower(supertype))
         return self.boundtype
+    
+    def typecheck(self) -> None:
+        pass
 
 
 class BinaryOperator(enum.Enum):
@@ -640,7 +714,7 @@ class BinaryOperator(enum.Enum):
     OR = enum.auto()
 
     def __str__(self) -> str:
-        return self.name
+        return _BINOP_SYMBOL[self]
 
 _RINHAOP_PARSE_DICT: t.Final[t.Dict[SyntaxBinaryOperator, BinaryOperator]] = {
     'Add': BinaryOperator.ADD,
@@ -658,40 +732,38 @@ _RINHAOP_PARSE_DICT: t.Final[t.Dict[SyntaxBinaryOperator, BinaryOperator]] = {
     'Or': BinaryOperator.OR
 }
 
-class BinaryExpression(Expression):
-    """Binary operations have well known type. They will be never UNDEFINED."""
+_BINOP_SYMBOL: t.Final[t.Dict[BinaryOperator, str]] = {
+    BinaryOperator.ADD: '+',
+    BinaryOperator.SUB: '-',
+    BinaryOperator.MUL: '*',
+    BinaryOperator.MOD: '%',
+    BinaryOperator.LT: '<',
+    BinaryOperator.LTE: '<=',
+    BinaryOperator.GT: '>',
+    BinaryOperator.GTE: '>=',
+    BinaryOperator.EQ: '==',
+    BinaryOperator.NEQ: '!=',
+    BinaryOperator.AND: '&&',
+    BinaryOperator.OR: '||'
+}
+
+class ConcatenateExpression(Expression):
 
     def __init__(
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional[Expression],
         left: Expression,
-        op: BinaryOperator,
         right: Expression
     ) -> None:
-        super().__init__(type_, scope, parent)
-        self.left: t.Final = left
-        self.op: t.Final = op
-        self.right: t.Final = right
+        super().__init__(type_, scope, location, parent)
+        self.left = left
+        self.right = right
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
-        match self.op:
-            case BinaryOperator.ADD:
-                return self._typecheck_add(supertype)
-            case BinaryOperator.SUB | BinaryOperator.MUL | BinaryOperator.DIV | BinaryOperator.MOD:
-                return self._typecheck_arithmetic(supertype)
-            case BinaryOperator.LTE | BinaryOperator.LT | BinaryOperator.GT | BinaryOperator.GTE:
-                return self._typecheck_comparison(supertype)
-            case BinaryOperator.AND | BinaryOperator.OR:
-                return self._typecheck_logical(supertype)
-            case BinaryOperator.EQ:
-                return self._typecheck_equals(supertype)
-            case BinaryOperator.NEQ:
-                return self._typecheck_not_equals(supertype)
-
-    def _typecheck_add(self, supertype: IBoundType) -> IBoundType:
         left = self.left.infertype(BINOP_ADD_TYPES)
         right = self.right.infertype(BINOP_ADD_TYPES)
         if left.type == NativeType.INTEGER and right.type == NativeType.INTEGER:
@@ -702,25 +774,199 @@ class BinaryExpression(Expression):
             self.boundtype = BINOP_ADD_TYPES
         return supertype.lower(self.boundtype)
 
-    def _typecheck_arithmetic(self, supertype: IBoundType) -> IBoundType:
+    def typecheck(self) -> None:
+        self.left.typecheck()
+        self.right.typecheck()
+        if (
+            (self.left.boundtype.is_static and
+                BINOP_ADD_TYPES.lower(self.left.boundtype).type == NativeType.UNDEFINED) or
+            (self.right.boundtype.is_static and
+                BINOP_ADD_TYPES.lower(self.right.boundtype).type == NativeType.UNDEFINED)
+        ):
+            raise TypeError(f"'+' can be applied between numbers and strings, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
+
+
+class ArithmeticExpression(Expression):
+
+    def __init__(
+        self,
+        *,
+        type_: IBoundType,
+        scope: Scope,
+        location: SourceCodeLocation,
+        parent: t.Optional[Expression],
+        left: Expression,
+        op: BinaryOperator,
+        right: Expression
+    ) -> None:
+        super().__init__(type_, scope, location, parent)
+        self.left = left
+        self.op: t.Final = op
+        self.right = right
+
+    def infertype(self, supertype: IBoundType) -> IBoundType:
         self.left.infertype(BOUND_INTEGER_TYPE)
         self.right.infertype(BOUND_INTEGER_TYPE)
         self.boundtype = BOUND_INTEGER_TYPE
         return supertype.lower(self.boundtype)
-    
-    def _typecheck_comparison(self, supertype: IBoundType) -> IBoundType:
+
+    def typecheck(self) -> None:
+        self.left.typecheck()
+        self.right.typecheck()
+        if (
+            (self.left.boundtype.is_static and self.left.boundtype.type != NativeType.INTEGER) or
+            (self.right.boundtype.is_static and self.right.boundtype.type != NativeType.INTEGER)
+        ):
+            raise TypeError(f"'{self.op}' can be applied between numbers, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
+        if self.left.boundtype.type != NativeType.INTEGER:
+            newleft = TypeCheckExpression(
+                type_=BOUND_INTEGER_TYPE,
+                scope=self.scope,
+                location=self.left.location,
+                value=self.left,
+                parent=self
+            )
+            self.left.parent = newleft
+            self.left = newleft
+        if self.right.boundtype.type != NativeType.INTEGER:
+            newright = TypeCheckExpression(
+                type_=BOUND_INTEGER_TYPE,
+                scope=self.scope,
+                location=self.right.location,
+                value=self.right,
+                parent=self
+            )
+            self.right.parent = newright
+            self.right = newright
+
+
+class NumericComparisonExpression(Expression):
+
+    def __init__(
+        self,
+        *,
+        type_: IBoundType,
+        scope: Scope,
+        location: SourceCodeLocation,
+        parent: t.Optional[Expression],
+        left: Expression,
+        op: BinaryOperator,
+        right: Expression
+    ) -> None:
+        super().__init__(type_, scope, location, parent)
+        self.left = left
+        self.op: t.Final = op
+        self.right = right
+
+    def infertype(self, supertype: IBoundType) -> IBoundType:
         self.left.infertype(BOUND_INTEGER_TYPE)
         self.right.infertype(BOUND_INTEGER_TYPE)
         self.boundtype = BOUND_BOOLEAN_TYPE
         return supertype.lower(self.boundtype)
+    
+    def typecheck(self) -> None:
+        self.left.typecheck()
+        self.right.typecheck()
+        if (
+            (self.left.boundtype.is_static and self.left.boundtype.type != NativeType.INTEGER) or
+            (self.right.boundtype.is_static and self.right.boundtype.type != NativeType.INTEGER)
+        ):
+            raise TypeError(f"'{self.op}' can be applied between numbers, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
+        if self.left.boundtype.type != NativeType.INTEGER:
+            newleft = TypeCheckExpression(
+                type_=BOUND_INTEGER_TYPE,
+                scope=self.scope,
+                location=self.left.location,
+                value=self.left,
+                parent=self
+            )
+            self.left.parent = newleft
+            self.left = newleft
+        if self.right.boundtype.type != NativeType.INTEGER:
+            newright = TypeCheckExpression(
+                type_=BOUND_INTEGER_TYPE,
+                scope=self.scope,
+                location=self.right.location,
+                value=self.right,
+                parent=self
+            )
+            self.right.parent = newright
+            self.right = newright
+    
 
-    def _typecheck_logical(self, supertype: IBoundType) -> IBoundType:
+class BooleanExpression(Expression):
+
+    def __init__(
+        self,
+        *,
+        type_: IBoundType,
+        scope: Scope,
+        location: SourceCodeLocation,
+        parent: t.Optional[Expression],
+        left: Expression,
+        op: BinaryOperator,
+        right: Expression
+    ) -> None:
+        super().__init__(type_, scope, location, parent)
+        self.left = left
+        self.op: t.Final = op
+        self.right = right
+
+    def infertype(self, supertype: IBoundType) -> IBoundType:
         self.left.infertype(BOUND_BOOLEAN_TYPE)
         self.right.infertype(BOUND_BOOLEAN_TYPE)
         self.boundtype = BOUND_BOOLEAN_TYPE
         return supertype.lower(self.boundtype)
+    
+    def typecheck(self) -> None:
+        self.left.typecheck()
+        self.right.typecheck()
+        if (
+            (self.left.boundtype.is_static and self.left.boundtype.type != NativeType.BOOLEAN) or
+            (self.right.boundtype.is_static and self.right.boundtype.type != NativeType.BOOLEAN)
+        ):
+            raise TypeError(f"'{self.op}' can be applied between booleans, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
+        if self.left.boundtype.type != NativeType.BOOLEAN:
+            newleft = TypeCheckExpression(
+                type_=BOUND_BOOLEAN_TYPE,
+                scope=self.scope,
+                location=self.left.location,
+                value=self.left,
+                parent=self
+            )
+            self.left.parent = newleft
+            self.left = newleft
+        if self.right.boundtype.type != NativeType.BOOLEAN:
+            newright = TypeCheckExpression(
+                type_=BOUND_BOOLEAN_TYPE,
+                scope=self.scope,
+                location=self.right.location,
+                value=self.right,
+                parent=self
+            )
+            self.right.parent = newright
+            self.right = newright
 
-    def _typecheck_equals(self, supertype: IBoundType) -> IBoundType:
+
+class EqualsExpression(Expression):
+
+    def __init__(
+        self,
+        *,
+        type_: IBoundType,
+        scope: Scope,
+        location: SourceCodeLocation,
+        parent: t.Optional[Expression],
+        left: Expression,
+        op: BinaryOperator,
+        right: Expression
+    ) -> None:
+        super().__init__(type_, scope, location, parent)
+        self.left = left
+        self.op: t.Final = op
+        self.right = right
+
+    def infertype(self, supertype: IBoundType) -> IBoundType:
         left = self.left.infertype(BINOP_EQUAL_TYPES)
         if left.type == NativeType.BOOLEAN:
             self.right.infertype(BOUND_BOOLEAN_TYPE)
@@ -729,22 +975,99 @@ class BinaryExpression(Expression):
         elif left.type == NativeType.STRING:
             self.right.infertype(BOUND_STRING_TYPE)
         else:
-            self.right.infertype(BINOP_EQUAL_TYPES)
+            right = self.right.infertype(BINOP_EQUAL_TYPES)
+            if right.type == NativeType.BOOLEAN:
+                self.left.infertype(BOUND_BOOLEAN_TYPE)
+            elif right.type == NativeType.INTEGER:
+                self.left.infertype(BOUND_INTEGER_TYPE)
+            elif right.type == NativeType.STRING:
+                self.left.infertype(BOUND_STRING_TYPE)
         self.boundtype = BOUND_BOOLEAN_TYPE
         return supertype.lower(self.boundtype)
-    
-    def _typecheck_not_equals(self, supertype: IBoundType) -> IBoundType:
-        left = self.left.infertype(BINOP_NOT_EQUAL_TYPES)
-        if left.type == NativeType.BOOLEAN:
-            self.right.infertype(BOUND_BOOLEAN_TYPE)
-        elif left.type == NativeType.INTEGER:
-            self.right.infertype(BOUND_INTEGER_TYPE)
-        elif left.type == NativeType.STRING:
-            self.right.infertype(BOUND_STRING_TYPE)
-        else:
-            self.right.infertype(BINOP_NOT_EQUAL_TYPES)
-        self.boundtype = BOUND_BOOLEAN_TYPE
-        return supertype.lower(self.boundtype)
+
+    def typecheck(self) -> None:
+        self.left.typecheck()
+        self.right.typecheck()
+        if self.left.boundtype.type == NativeType.BOOLEAN:
+            if self.right.boundtype.is_static and self.right.boundtype.type != NativeType.BOOLEAN:
+                raise TypeError(f"'{self.op}' can be applied between booleans, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
+            if not self.right.boundtype.is_static:
+                newright = TypeCheckExpression(
+                    type_=BOUND_BOOLEAN_TYPE,
+                    scope=self.scope,
+                    location=self.right.location,
+                    value=self.right,
+                    parent=self
+                )
+                self.right.parent = newright
+                self.right = newright
+        elif self.right.boundtype.type == NativeType.BOOLEAN:
+            if self.left.boundtype.is_static and self.left.boundtype.type != NativeType.BOOLEAN:
+                raise TypeError(f"'{self.op}' can be applied between booleans, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
+            if not self.left.boundtype.is_static:
+                newleft = TypeCheckExpression(
+                    type_=BOUND_BOOLEAN_TYPE,
+                    scope=self.scope,
+                    location=self.left.location,
+                    value=self.left,
+                    parent=self
+                )
+                self.left.parent = newleft
+                self.left = newleft
+        elif self.left.boundtype.type == NativeType.INTEGER:
+            if self.right.boundtype.is_static and self.right.boundtype.type != NativeType.INTEGER:
+                raise TypeError(f"'{self.op}' can be applied between numbers, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
+            if not self.right.boundtype.is_static:
+                newright = TypeCheckExpression(
+                    type_=BOUND_INTEGER_TYPE,
+                    scope=self.scope,
+                    location=self.right.location,
+                    value=self.right,
+                    parent=self
+                )
+                self.right.parent = newright
+                self.right = newright
+        elif self.right.boundtype.type == NativeType.INTEGER:
+            if self.left.boundtype.is_static and self.left.boundtype.type != NativeType.INTEGER:
+                raise TypeError(f"'{self.op}' can be applied between numbers, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
+            if not self.left.boundtype.is_static:
+                newleft = TypeCheckExpression(
+                    type_=BOUND_INTEGER_TYPE,
+                    scope=self.scope,
+                    location=self.left.location,
+                    value=self.left,
+                    parent=self
+                )
+                self.left.parent = newleft
+                self.left = newleft
+        elif self.left.boundtype.type == NativeType.STRING:
+            if self.right.boundtype.is_static and self.right.boundtype.type != NativeType.STRING:
+                raise TypeError(f"'{self.op}' can be applied between strings, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
+            if not self.right.boundtype.is_static:
+                newright = TypeCheckExpression(
+                    type_=BOUND_STRING_TYPE,
+                    scope=self.scope,
+                    location=self.right.location,
+                    value=self.right,
+                    parent=self
+                )
+                self.right.parent = newright
+                self.right = newright
+        elif self.right.boundtype.type == NativeType.STRING:
+            if self.left.boundtype.is_static and self.left.boundtype.type != NativeType.STRING:
+                raise TypeError(f"'{self.op}' can be applied between strings, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
+            if not self.left.boundtype.is_static:
+                newleft = TypeCheckExpression(
+                    type_=BOUND_STRING_TYPE,
+                    scope=self.scope,
+                    location=self.left.location,
+                    value=self.left,
+                    parent=self
+                )
+                self.left.parent = newleft
+                self.left = newleft
+        elif self.left.boundtype.is_static or self.right.boundtype.is_static:
+            raise TypeError(f"'{self.op}' can be applied between booleans, numbers and strings, but got '{self.left.boundtype}' and '{self.right.boundtype}' at {self.location}")
 
 
 class PrintExpression(Expression):
@@ -754,15 +1077,19 @@ class PrintExpression(Expression):
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         value: Expression
     ) -> None:
-        super().__init__(type_, scope, parent)
-        self.value: t.Final = value
+        super().__init__(type_, scope, location, parent)
+        self.value = value
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
         return self.value.infertype(supertype)
+    
+    def typecheck(self) -> None:
+        self.value.typecheck()
 
 
 class TupleExpression(Expression):
@@ -771,16 +1098,17 @@ class TupleExpression(Expression):
     def __init__(
         self,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         first: Expression,
         second: Expression
     ) -> None:
         if type_.type != NativeType.TUPLE:
             raise TypeError(f"expected NativeType.TUPLE type for tuple expression, but got {type_}")
-        super().__init__(type_, scope, parent)
-        self.first: t.Final = first
-        self.second: t.Final = second
+        super().__init__(type_, scope, location, parent)
+        self.first = first
+        self.second = second
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
         supertuple = supertype.lower(BOUND_TUPLE_TYPE)
@@ -795,6 +1123,10 @@ class TupleExpression(Expression):
             return self.boundtype
         self.boundtype = BOUND_TUPLE_TYPE
         return BOUND_UNDEFINED_TYPE
+    
+    def typecheck(self) -> None:
+        self.first.typecheck()
+        self.second.typecheck()
 
 class FirstExpression(Expression):
     """First takes tuples as argument and return their first member"""
@@ -803,12 +1135,13 @@ class FirstExpression(Expression):
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         value: Expression
     ) -> None:
-        super().__init__(type_, scope, parent)
-        self.value: t.Final = value
+        super().__init__(type_, scope, location, parent)
+        self.value = value
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
         signature = self.value.infertype(BoundType(NativeType.TUPLE, (supertype, BOUND_ANY_TYPE)))
@@ -817,6 +1150,22 @@ class FirstExpression(Expression):
             return signature.generics[0]
         self.boundtype = BOUND_UNDEFINED_TYPE
         return BOUND_UNDEFINED_TYPE
+    
+    def typecheck(self) -> None:
+        self.value.typecheck()
+        if self.value.boundtype.is_static and self.value.boundtype.type != NativeType.TUPLE:
+            raise TypeError(f"first() can be applied only to tuples, but got {self.value.boundtype} at {self.value.location}")
+        if not self.value.boundtype.is_static:
+            newvalue = TypeCheckExpression(
+                type_=BOUND_TUPLE_TYPE,
+                scope=self.scope,
+                location=self.value.location,
+                value=self.value,
+                parent=self
+            )
+            self.value.parent = newvalue
+            self.value = newvalue
+
 
 class SecondExpression(Expression):
     """Second takes tuples as argument and return their second member"""
@@ -825,12 +1174,13 @@ class SecondExpression(Expression):
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         value: Expression
     ) -> None:
-        super().__init__(type_, scope, parent)
-        self.value: t.Final = value
+        super().__init__(type_, scope, location, parent)
+        self.value = value
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
         signature = self.value.infertype(BoundType(NativeType.TUPLE, (BOUND_ANY_TYPE, supertype)))
@@ -839,6 +1189,21 @@ class SecondExpression(Expression):
             return signature.generics[1]
         self.boundtype = BOUND_UNDEFINED_TYPE
         return BOUND_UNDEFINED_TYPE
+    
+    def typecheck(self) -> None:
+        self.value.typecheck()
+        if self.value.boundtype.is_static and self.value.boundtype.type != NativeType.TUPLE:
+            raise TypeError(f"second() can be applied only to tuples, but got {self.value.boundtype} at {self.value.location}")
+        if not self.value.boundtype.is_static:
+            newvalue = TypeCheckExpression(
+                type_=BOUND_TUPLE_TYPE,
+                scope=self.scope,
+                location=self.value.location,
+                value=self.value,
+                parent=self
+            )
+            self.value.parent = newvalue
+            self.value = newvalue
 
 
 class ConditionalExpression(Expression):
@@ -848,21 +1213,20 @@ class ConditionalExpression(Expression):
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         cond: Expression,
         then: Expression,
         alternate: Expression,
     ) -> None:
-        super().__init__(type_, scope, parent)
+        super().__init__(type_, scope, location, parent)
         self.cond: t.Final = cond
-        self.then: t.Final = then
-        self.alternate: t.Final = alternate
+        self.then = then
+        self.alternate = alternate
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
-        cond = self.cond.infertype(BOUND_BOOLEAN_TYPE)
-        if cond.type != NativeType.BOOLEAN:
-            raise TypeError("conditional expressions must have a boolean as test")
+        self.cond.infertype(BOUND_BOOLEAN_TYPE)
         then = self.then.infertype(supertype)
         if self.parent is not None:
             self.parent.handle_partial_inference(then)
@@ -873,6 +1237,23 @@ class ConditionalExpression(Expression):
     def handle_partial_inference(self, type_: IBoundType) -> None:
         if self.parent is not None:
             return self.parent.handle_partial_inference(type_)
+        
+    def typecheck(self) -> None:
+        self.cond.typecheck()
+        self.then.typecheck()
+        self.alternate.typecheck()
+        if self.cond.boundtype.is_static and self.cond.boundtype.type != NativeType.BOOLEAN:
+            raise TypeError(f"conditional expression requires a boolean test, but got '{self.cond.boundtype}' at {self.cond.location}")
+        if not self.cond.boundtype.is_static:
+            newcond = TypeCheckExpression(
+                type_=BOUND_BOOLEAN_TYPE,
+                scope=self.scope,
+                location=self.cond.location,
+                value=self.cond,
+                parent=self
+            )
+            self.cond.parent = newcond
+            self.cond = newcond
 
 
 class CallExpression(Expression):
@@ -882,14 +1263,15 @@ class CallExpression(Expression):
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         callee: Expression,
         args: t.List[Expression]
     ) -> None:
-        super().__init__(type_, scope, parent)
+        super().__init__(type_, scope, location, parent)
         self.callee: t.Final = callee
-        self.args: t.Final = args
+        self.args = args
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
         # we propagate back the type hints from the function signature to the caller arguments
@@ -897,7 +1279,7 @@ class CallExpression(Expression):
         if self.callee.boundtype.type == NativeType.FUNCTION:
             callee_type = t.cast(BoundFunctionType, self.callee.boundtype)
             signature = self.callee.infertype(BoundFunctionType(
-                tuple(arg.infertype(callee_type.params[i]) for i, arg in enumerate(self.args)),
+                tuple(arg.try_infertype(callee_type.params[i]) for i, arg in enumerate(self.args)),
                 supertype
             ))
         else:
@@ -911,6 +1293,11 @@ class CallExpression(Expression):
             return signature.return_type
         self.boundtype = signature
         return signature
+    
+    def typecheck(self) -> None:
+        self.callee.typecheck()
+        for arg in self.args:
+            arg.typecheck()
 
 
 class FunctionExpression(Expression):
@@ -919,16 +1306,17 @@ class FunctionExpression(Expression):
         self,
         *,
         type_: BoundFunctionType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         params: t.List[ReferenceExpression],
         body: Expression,
         binding: t.Optional[ReferenceExpression] = None,
     ) -> None:
-        super().__init__(type_, scope, parent)
+        super().__init__(type_, scope, location, parent)
         self.binding: t.Final = binding
-        self.params: t.Final = params
-        self.body: t.Final = body
+        self.params = params
+        self.body = body
 
     def infertype(self, supertype: IBoundType) -> IBoundType:
         lowered_signature = supertype.lower(self.boundtype)
@@ -938,7 +1326,7 @@ class FunctionExpression(Expression):
             for i, param in enumerate(self.params):
                 param.infertype(param_types[i])
             return_type = self.body.infertype(lowered_signature.return_type)
-            if return_type.lowers(lowered_signature.return_type):
+            if return_type.lowers_any(lowered_signature.return_type):
                 self.boundtype = BoundFunctionType(
                     tuple(param.boundtype for param in self.params),
                     return_type
@@ -953,8 +1341,23 @@ class FunctionExpression(Expression):
 
     def handle_partial_inference(self, type_: IBoundType) -> None:
         boundtype = t.cast(BoundFunctionType, self.boundtype)
-        if self.binding is not None and type_.lowers(boundtype.return_type):
+        if self.binding is not None and type_.lowers_any(boundtype.return_type):
             self.binding.infertype(BoundFunctionType(boundtype.params, type_))
+
+    def typecheck(self) -> None:
+        self.body.typecheck()
+        if self.body.boundtype.is_static and not self.body.boundtype.lowers_any(self.boundtype.return_type):
+            raise TypeError(f"expected return type {self.boundtype.return_type}, but got {self.body.boundtype} at {self.body.location}")
+        if self.boundtype.return_type.is_static and not self.body.boundtype.is_static:
+            newbody = TypeCheckExpression(
+                type_=self.boundtype.return_type,
+                scope=self.scope,
+                value=self.body,
+                location=self.body.location,
+                parent=self
+            )
+            self.body.parent = newbody
+            self.body = newbody
 
     def __str__(self) -> str:
         if self.binding is not None:
@@ -968,13 +1371,14 @@ class LetExpression(Expression):
         self,
         *,
         type_: IBoundType,
-        scope: TypeScope,
+        scope: Scope,
+        location: SourceCodeLocation,
         parent: t.Optional['Expression'],
         binding: t.Optional[ReferenceExpression],
         value: Expression,
         next: Expression
     ) -> None:
-        super().__init__(type_, scope, parent)
+        super().__init__(type_, scope, location, parent)
         self.binding: t.Final = binding
         self.value: t.Final = value
         self.next: t.Final = next
@@ -995,6 +1399,10 @@ class LetExpression(Expression):
     def handle_partial_inference(self, type_: IBoundType) -> None:
         if self.parent is not None:
             return self.parent.handle_partial_inference(type_)
+        
+    def typecheck(self) -> None:
+        self.value.typecheck()
+        self.next.typecheck()
 
 
 class Program:
@@ -1005,7 +1413,7 @@ class Program:
 
 
 def typecheck(syntax: SyntaxTerm) -> Expression:
-    globalscope = TypeScope(None)
+    globalscope = Scope(None)
     allvars: t.List[ScopeVar] = []
     ast = build_typed_ast(syntax, None, globalscope, allvars)
     varschanged = False
@@ -1016,14 +1424,16 @@ def typecheck(syntax: SyntaxTerm) -> Expression:
                 varschanged = True
                 var.changed = False
         if not varschanged:
-            return ast
+            break
         varschanged = False
+    ast.typecheck()
+    return ast
 
 
 def build_typed_ast(
     term: SyntaxTerm,
     parent: t.Optional[Expression],
-    scope: TypeScope,
+    scope: Scope,
     vars: t.List[ScopeVar],
     **childargs: t.Any
 ) -> Expression:
@@ -1037,20 +1447,55 @@ def build_typed_ast(
             return ReferenceExpression(
                 type_=var.type,
                 scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
                 parent=parent,
                 var=var
             )
         case 'Int':
             term = t.cast(LiteralSyntax, term)
             value = t.cast(int, term['value'])
-            return LiteralIntegerValue(type_=BOUND_INTEGER_TYPE, scope=scope, parent=parent, value=value)
+            return LiteralIntegerValue(
+                type_=BOUND_INTEGER_TYPE,
+                scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
+                parent=parent,
+                value=value
+            )
         case 'Str':
             term = t.cast(LiteralSyntax, term)
             value2 = t.cast(str, term['value'])
-            return LiteralStringValue(type_=BOUND_STRING_TYPE, scope=scope, parent=parent, value=value2)
+            return LiteralStringValue(
+                type_=BOUND_STRING_TYPE,
+                scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
+                parent=parent,
+                value=value2
+            )
         case 'Bool':
             term = t.cast(LiteralBooleanSyntax, term)
-            return LiteralBooleanValue(type_=BOUND_BOOLEAN_TYPE, scope=scope, parent=parent, value=term['value'])
+            return LiteralBooleanValue(
+                type_=BOUND_BOOLEAN_TYPE,
+                scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
+                parent=parent,
+                value=term['value']
+            )
         case 'Tuple':
             term = t.cast(TupleSyntax, term)
             first = build_typed_ast(term['first'], None, scope, vars)
@@ -1058,6 +1503,11 @@ def build_typed_ast(
             tuple_ = TupleExpression(
                 type_=BoundType(NativeType.TUPLE, (first.boundtype, second.boundtype)),
                 scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
                 parent=parent,
                 first=first,
                 second=second
@@ -1075,6 +1525,11 @@ def build_typed_ast(
             call = CallExpression(
                 type_=BOUND_ANY_TYPE,
                 scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
                 parent=parent,
                 callee=callee,
                 args=args
@@ -1089,6 +1544,11 @@ def build_typed_ast(
             theprint = PrintExpression(
                 type_=BOUND_ANY_TYPE,
                 scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
                 parent=parent,
                 value=value3
             )
@@ -1100,6 +1560,11 @@ def build_typed_ast(
             first = FirstExpression(
                 type_=BOUND_ANY_TYPE,
                 scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
                 parent=parent,
                 value=value4
             )
@@ -1111,6 +1576,11 @@ def build_typed_ast(
             second = SecondExpression(
                 type_=BOUND_ANY_TYPE,
                 scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
                 parent=parent,
                 value=value4
             )
@@ -1120,14 +1590,79 @@ def build_typed_ast(
             term = t.cast(BinaryExpressionSyntax, term)
             left = build_typed_ast(term['lhs'], None, scope, vars)
             right = build_typed_ast(term['rhs'], None, scope, vars)
-            exp = BinaryExpression(
-                type_=BOUND_ANY_TYPE,
-                scope=scope,
-                parent=parent,
-                left=left,
-                op=_RINHAOP_PARSE_DICT[term['op']],
-                right=right
-            )
+            op = _RINHAOP_PARSE_DICT[term['op']]
+            match op:
+                case BinaryOperator.ADD:
+                    exp = ConcatenateExpression(
+                        type_=BOUND_ANY_TYPE,
+                        scope=scope,
+                        location=SourceCodeLocation(
+                            file=term['location']['filename'],
+                            line=term['location']['line'],
+                            column=term['location']['start']
+                        ),
+                        parent=parent,
+                        left=left,
+                        right=right
+                    )
+                case BinaryOperator.SUB | BinaryOperator.MUL | BinaryOperator.DIV | BinaryOperator.MOD:
+                    exp = ArithmeticExpression(
+                        type_=BOUND_ANY_TYPE,
+                        scope=scope,
+                        location=SourceCodeLocation(
+                            file=term['location']['filename'],
+                            line=term['location']['line'],
+                            column=term['location']['start']
+                        ),
+                        parent=parent,
+                        left=left,
+                        op=op,
+                        right=right
+                    )
+                case BinaryOperator.LTE | BinaryOperator.LT | BinaryOperator.GT | BinaryOperator.GTE:
+                    exp = NumericComparisonExpression(
+                        type_=BOUND_ANY_TYPE,
+                        scope=scope,
+                        location=SourceCodeLocation(
+                            file=term['location']['filename'],
+                            line=term['location']['line'],
+                            column=term['location']['start']
+                        ),
+                        parent=parent,
+                        left=left,
+                        op=op,
+                        right=right
+                    )
+                case BinaryOperator.AND | BinaryOperator.OR:
+                    exp = BooleanExpression(
+                        type_=BOUND_ANY_TYPE,
+                        scope=scope,
+                        location=SourceCodeLocation(
+                            file=term['location']['filename'],
+                            line=term['location']['line'],
+                            column=term['location']['start']
+                        ),
+                        parent=parent,
+                        left=left,
+                        op=op,
+                        right=right
+                    )
+                case BinaryOperator.EQ | BinaryOperator.NEQ:
+                    exp = EqualsExpression(
+                        type_=BOUND_ANY_TYPE,
+                        scope=scope,
+                        location=SourceCodeLocation(
+                            file=term['location']['filename'],
+                            line=term['location']['line'],
+                            column=term['location']['start']
+                        ),
+                        parent=parent,
+                        left=left,
+                        op=op,
+                        right=right
+                    )
+                case _:
+                    raise ValueError(f'unknown binary operator: {op}')
             left.parent = exp
             right.parent = exp
             return exp
@@ -1135,11 +1670,16 @@ def build_typed_ast(
             term = t.cast(ConditionalExpressionSyntax, term)
             cond = build_typed_ast(term['condition'], None, scope, vars)
             # branches create new variable scope
-            then = build_typed_ast(term['then'], None, TypeScope(scope), vars)
-            alternate = build_typed_ast(term['otherwise'], None, TypeScope(scope), vars)
+            then = build_typed_ast(term['then'], None, Scope(scope), vars)
+            alternate = build_typed_ast(term['otherwise'], None, Scope(scope), vars)
             exp2 = ConditionalExpression(
                 type_=BOUND_ANY_TYPE,
                 scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
                 parent=parent,
                 cond=cond,
                 then=then,
@@ -1151,7 +1691,7 @@ def build_typed_ast(
             return exp2
         case 'Function':
             term = t.cast(FunctionExpressionSyntax, term)
-            funcscope = TypeScope(scope)
+            funcscope = Scope(scope)
             params = [
                 funcscope.declare(param['text'], BOUND_ANY_TYPE)
                 for param in term['parameters']
@@ -1160,15 +1700,25 @@ def build_typed_ast(
             func = FunctionExpression(
                 type_=BoundFunctionType(tuple(param.type for param in params), BOUND_ANY_TYPE),
                 scope=funcscope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
                 parent=parent,
                 params=[
                     ReferenceExpression(
                         type_=param.type,
                         scope=funcscope,
+                        location=SourceCodeLocation(
+                            file=term['parameters'][i]['location']['filename'],
+                            line=term['parameters'][i]['location']['line'],
+                            column=term['parameters'][i]['location']['start']
+                        ),
                         parent=None,
                         var=param
                     )
-                    for param in params
+                    for i, param in enumerate(params)
                 ],
                 body=body,
                 **childargs
@@ -1183,6 +1733,11 @@ def build_typed_ast(
                 binding = ReferenceExpression(
                     type_=var.type,
                     scope=scope,
+                    location=SourceCodeLocation(
+                        file=term['name']['location']['filename'],
+                        line=term['name']['location']['line'],
+                        column=term['name']['location']['start']
+                    ),
                     parent=None,
                     var=var
                 )
@@ -1196,6 +1751,11 @@ def build_typed_ast(
                     binding = ReferenceExpression(
                         type_=var.type,
                         scope=scope,
+                        location=SourceCodeLocation(
+                            file=term['name']['location']['filename'],
+                            line=term['name']['location']['line'],
+                            column=term['name']['location']['start']
+                        ),
                         parent=None,
                         var=var
                     )
@@ -1206,6 +1766,11 @@ def build_typed_ast(
             exp3 = LetExpression(
                 type_=BOUND_ANY_TYPE,
                 scope=scope,
+                location=SourceCodeLocation(
+                    file=term['location']['filename'],
+                    line=term['location']['line'],
+                    column=term['location']['start']
+                ),
                 parent=parent,
                 binding=binding,
                 value=value5,

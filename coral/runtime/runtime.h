@@ -105,6 +105,7 @@ CRObject* CRObject_sub(CRObject* self, CRObject* other);
 CRObject* CRObject_mul(CRObject* self, CRObject* other);
 CRObject* CRObject_div(CRObject* self, CRObject* other);
 CRObject* CRObject_mod(CRObject* self, CRObject* other);
+void CRObject_assertInt(CRObject* self);
 
 
 /**********************************************************************************************
@@ -133,6 +134,7 @@ CRObject* CRObject_and(CRObject* self, CRObject* other);
 CRObject* CRObject_or(CRObject* self, CRObject* other);
 CRObject* CRObject_equals(CRObject* self, CRObject* other);
 CRObject* CRObject_notEquals(CRObject* self, CRObject* other);
+void CRObject_assertBool(CRObject* self);
 
 
 /**********************************************************************************************
@@ -152,6 +154,7 @@ inline const char* CRObject_asString(CRObject* self) {
     return ((CRString*)self->value)->value;
 }
 CRObject* CRString_repr(CRString* self);
+void CRObject_assertString(CRObject* self);
 
 
 /**********************************************************************************************
@@ -170,6 +173,7 @@ inline const CRTuple* CRObject_asTuple(CRObject* self) {
 CRObject* CRTuple_getFirst(CRObject* self);
 CRObject* CRTuple_getSecond(CRObject* self);
 CRObject* CRTuple_repr(CRTuple* self);
+void CRObject_assertTuple(CRObject* self);
 
 
 /**********************************************************************************************
@@ -191,5 +195,6 @@ CRObject* CRFunction_new(
 void CRFunction_destroy(CRFunction* self);
 void CRFunction_setGlobal(CRObject* self, size_t index, CRObject* global);
 CRObject* CRFunction_call(CRObject* self, size_t argscount, ...);
+void CRObject_assertFunction(CRObject* self);
 
 #endif

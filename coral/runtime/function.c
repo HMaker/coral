@@ -154,3 +154,9 @@ CRObject* CRFunction_call(CRObject* self, size_t argscount, ...) {
     CRObject_decref(self);
     return result;
 }
+
+
+void CRObject_assertFunction(CRObject* self) {
+    if (CRObject_getType(self) != CR_FUNCTION)
+        CR_ABORT("FATAL: expected function, but got %s\n", CRObject_getTypeName(self))
+}
